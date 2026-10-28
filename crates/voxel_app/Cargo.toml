@@ -1,0 +1,13 @@
+[package]
+name = "voxel_app"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+voxel_core.workspace = true
+voxel_gen.workspace = true
+voxel_sim.workspace = true
+voxel_ecs.workspace = true
+voxel_script.workspace = true
+voxel_render.workspace = true
+macroquad.workspace = true

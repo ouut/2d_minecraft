@@ -1,0 +1,8 @@
+[package]
+name = "voxel_ecs"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+voxel_core.workspace = true
+hecs.workspace = true

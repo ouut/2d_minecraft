@@ -1,0 +1,8 @@
+[package]
+name = "voxel_script"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+voxel_core.workspace = true
+steel-core.workspace = true

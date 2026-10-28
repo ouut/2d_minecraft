@@ -1,0 +1,9 @@
+[package]
+name = "voxel_gen"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+voxel_core.workspace = true
+noise.workspace = true
+rand.workspace = true

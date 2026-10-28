@@ -1,0 +1,7 @@
+[package]
+name = "voxel_sim"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+voxel_core.workspace = true
