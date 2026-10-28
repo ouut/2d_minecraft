@@ -1,44 +1,110 @@
-# 2.5D Layered Voxel Minecraft Engine (Dwarf Fortress × Minecraft)
+# 2.5D 分层体素引擎 (Dwarf Fortress × Minecraft)
 
-A high-performance 2.5D isometric voxel engine written in Rust with true 3D voxel data, 4-direction 90° camera rotation, layered Z-slicing editing, dual-channel BFS lighting, cellular automata fluids, structural collapse physics, 3D A* pathfinding, and full Steel Scheme modding support.
+这是一个基于 **Rust + Macroquad + hecs + steel-core (Scheme)** 开发的高性能 2.5D 等距视角分层体素游戏引擎。它融合了《矮人堡垒》(Dwarf Fortress) 的分层切片浏览、殖民地 AI 调度与《Minecraft》的 3D 方块世界、程序化地形、流体、光照与物理模拟，并内置了基于 **Steel Scheme 的 Mod 脚本语言与交互式 REPL 控制台**。
 
-## Architecture
+---
 
-The project follows a strict **3-Tier Star-Tree DAG** Cargo Workspace:
-```
-crates/
-├── voxel_core/    # Layer 0: Voxel, Chunk, IsoCamera, WorldAccess trait, EngineCommand bus
-├── voxel_gen/     # Layer 1: Minecraft-style 3D density noise, biomes, caves, ores, ramps
-├── voxel_sim/     # Layer 1: Dual-channel BFS lighting, fluids, structural collapse
-├── voxel_ecs/     # Layer 1: hecs ECS, 3D cross-layer A* pathfinding, colony jobs, player
-├── voxel_script/  # Layer 1: Steel Scheme VM modding engine, REPL, F5 hot-reloading
-├── voxel_render/  # Layer 1: Procedural 2.5D pixel-art atlas, painter's algorithm renderer, HUD
-└── voxel_app/     # Layer 2: Main loop, window, dynamic chunk world, input routing
-```
+## 🌟 核心特性
 
-## Documentation
+1. **三维数据与 2.5D 等距切片渲染**
+   - 真正的 3D 体素存储：每个体素 4 字节紧凑编码，支持 64 层垂直深度与无限水平分块动态加载。
+   - 2:1 经典等轴测 (Isometric) 投影，**支持 4 方向 90° 顺时针自由旋转视角**（`R` 键）。
+   - **矮人堡垒风格 Z 轴切片浏览**：通过 `Q/E` 或鼠标滚轮平滑升降当前编辑切片层 `slice_z`，自动剖切隐藏头顶遮挡物，深层具备层次分明的蓝紫色深度雾化。
+   - 高效遮挡剔除 (Occlusion Culling) 与 Back-to-Front 画家算法批次渲染。
 
-Detailed architecture specifications and multi-agent workflow documents are in `docs/`:
-- [docs/implementation_plan.md](docs/implementation_plan.md)
-- [docs/agent_concurrency_workflow.md](docs/agent_concurrency_workflow.md)
+2. **三大玩法模式无缝切换**
+   - **`F1` 主角生存探索模式 (Player Mode)**：相机平滑跟随主角，`WASD` 沿视角方向移动（遇斜坡自动上下台阶），鼠标左键挖掘方块、右键放置方块。
+   - **`F2` 殖民地 AI 调度模式 (Colony Mode)**：自由平移相机与切片，鼠标框选作业区下达【挖掘】、【挖渠】、【建造墙体/斜坡/楼梯】指令，矮人殖民者通过 **3D A\* 跨层寻路** 自动认领最近任务并施工。
+   - **`F3` 上帝世界编辑器 (God Mode)**：自由调色板、倾倒水流与岩浆、一键调用由 Scheme Mod 脚本编写的自定义结构生成器与魔法笔刷。
 
-## Controls & Shortcuts
+3. **核心物理与环境模拟**
+   - **双通道 BFS 光照传播**：天空光 `SkyLight (0-15)`（垂直投射向下漫射入洞穴，树叶与水衰减） + 方块光 `BlockLight (0-15)`（火把、萤石、岩浆与自定义发光矿石向 6 邻域漫射）。
+   - **8 级元胞自动机流体**：水与岩浆优先垂直下坠，受阻向四周平铺；流动水接触岩浆源生成黑曜石 (`Obsidian`)，接触流动岩浆生成圆石 (`Cobblestone`)。
+   - **重力与悬空坍塌**：沙子、沙砾下方无支撑时自然下坠，遇坡道沿休止角滑落；挖掘引发的局部悬空结构会在超出支撑极限 (`MAX_CANTILEVER = 5`) 时断裂坍塌。
 
-| Shortcut | Action |
+4. **Steel (Scheme) Mod 脚本引擎与开发工作流**
+   - 采用高效嵌入式 Lisp 引擎 `steel-core`。
+   - **动态方块注册**：无需重新编译 Rust，在 `.scm` 脚本中调用 `(register-block! ...)` 即可注册新方块并自动生成 2.5D 像素瓦片加入调色板。
+   - **一键热重载 (Hot Reload)**：游戏中按 `F5` 即可实时重载 `mods/*.scm`，无需重启游戏。
+   - **游戏内交互式 REPL 控制台**：按 `~`（反引号）或 `F12` 唤出半透明终端，在游戏内直接运行 Scheme 表达式实时操纵世界与实体。
+   - **自带官方示例 Mod 包 (`mods/`)**：
+     - `00_stdlib.scm`：几何建造宏与开掘辅助库。
+     - `01_magic_blocks.scm`：注册秘银矿 (`mythril_ore`)、以太水晶 (`aether_crystal`)、流沙 (`quicksand`) 等奇幻方块。
+     - `02_structures_and_tools.scm`：注册【建造瞭望塔】、【陨石天降】、【召唤殖民队】等自定义上帝笔刷。
+
+---
+
+## 🎮 操作快捷键表
+
+| 按键 / 操作 | 功能描述 |
 | :--- | :--- |
-| **F1** | Switch to **Player Survival Mode** (WASD movement, Left-click mine, Right-click place) |
-| **F2** | Switch to **Colony Simulation Mode** (Drag box to designate mining/building jobs) |
-| **F3** | Switch to **God Editor Mode** (Paint terrain, spawn fluids, trigger Mod Tools) |
-| **R** | Rotate 2.5D Isometric Camera 90° clockwise (North -> East -> South -> West) |
-| **Q / E** / Mouse Wheel | Adjust current Z-slice height (layers above are hidden/cut away) |
-| **F5** | **Hot-Reload Steel Scheme Mods** from `mods/*.scm` without restarting |
-| **`** / **F12** | Toggle interactive in-game **Steel Scheme REPL console** |
+| **`F1`** | 切换至 **主角生存探索模式** (Player Mode) |
+| **`F2`** | 切换至 **殖民地 AI 调度模式** (Colony Mode) |
+| **`F3`** | 切换至 **上帝世界编辑模式** (God Editor Mode) |
+| **`WASD` / 方向键** | 移动主角（遇自然坡道自动攀爬）或平移自由摄像机 |
+| **`R`** | 2.5D 等距视角 **90° 顺时针旋转** (0° N $\rightarrow$ 90° E $\rightarrow$ 180° S $\rightarrow$ 270° W) |
+| **`Q` / `E` 或 鼠标滚轮** | 调节当前 **Z 轴剖切高度 (`slice_z`)**，剖切上层方块 |
+| **鼠标左键** | 挖掘方块 / 框选殖民地任务 / 使用上帝工具笔刷 |
+| **鼠标右键** | 放置当前选中的方块 / 取消框选 |
+| **`F5`** | **热重载 Steel Scheme Mod 脚本** (`mods/*.scm`) |
+| **`~` (反引号) / `F12`** | 打开 / 关闭游戏内 **交互式 Scheme REPL 控制台** |
+| **`ESC`** | 关闭 REPL 控制台 |
 
-## Steel Scheme Modding (`mods/*.scm`)
+---
 
-Mods placed in `mods/` are automatically loaded on boot and can be hot-reloaded with `F5`.
+## 🏗️ 架构设计 (Strict 3-Tier Star-Tree DAG)
 
-Example mod scripts included:
-- `mods/00_stdlib.scm`: Standard geometry and excavation macros
-- `mods/01_magic_blocks.scm`: Registers custom ores (`mythril_ore`, `aether_crystal`, `quicksand`, `magma_slime`)
-- `mods/02_structures_and_tools.scm`: Registers custom interactive God Tools (`Build Watchtower`, `Meteor Strike`, `Call Colonists`)
+本项目为了支持多 AI Agent 并发协同开发且互不打架，将 Cargo Workspace 严格设计为单向无环星型树状依赖架构：
+
+```
+/workspace/2d_minecraft/
+├── Cargo.toml                       # [Phase 0 冻结] Workspace 根配置与统一依赖版本
+├── docs/                            # 详细设计与并发手册
+│   ├── implementation_plan.md       # 总体架构设计蓝图
+│   └── agent_concurrency_workflow.md# 多 Agent 协同并发工作手册
+├── mods/                            # 官方示例 Scheme Mod 脚本
+│   ├── 00_stdlib.scm
+│   ├── 01_magic_blocks.scm
+│   └── 02_structures_and_tools.scm
+└── crates/
+    ├── voxel_core/                  # [Layer 0 底座契约] 纯数据结构、Trait与消息总线 (零重依赖)
+    ├── voxel_gen/                   # [Layer 1 正交叶节点] MC 3D 密度噪声地形、生物群系与矿脉
+    ├── voxel_sim/                   # [Layer 1 正交叶节点] 双通道 BFS 光照、水/岩浆流体与坍塌
+    ├── voxel_ecs/                   # [Layer 1 正交叶节点] hecs 实体、3D 跨层 A* 寻路与殖民地作业
+    ├── voxel_script/                # [Layer 1 正交叶节点] Steel Scheme VM、热重载与 REPL 终端
+    ├── voxel_render/                # [Layer 1 正交叶节点] 程序化 2.5D 像素图集与画家算法渲染器
+    └── voxel_app/                   # [Layer 2 聚合宿主] 主循环、分块容器、输入分发与窗口入口
+```
+
+---
+
+## 🚀 本地运行与测试
+
+### 1. 运行所有单元测试
+```bash
+cargo test --workspace
+```
+> 包括坐标投影正反变换、3D 跨层坡道寻路、流体元胞扩散、光照传播与 Scheme Mod 动态注册测试。
+
+### 2. 本地启动游戏
+```bash
+cargo run --release --bin voxel_app
+```
+
+---
+
+## 📦 多平台自动编译与 Release 发布 (GitHub Actions)
+
+本项目配置了完善的 GitHub Actions 持续集成与发布工作流 (`.github/workflows/release.yml`)，可在 GitHub 仓库中全自动编译并在 Release 页面发布三大平台的可执行包：
+
+- **Windows**: `x86_64-pc-windows-msvc` (`voxel_app-windows-x86_64.zip`)
+- **macOS (Apple Silicon)**: `aarch64-apple-darwin` (`voxel_app-macos-arm64.tar.gz`)
+- **Linux**: `x86_64-unknown-linux-gnu` (`voxel_app-linux-x86_64.tar.gz`)
+
+### 触发自动发布：
+只需在本地打上版本 tag 并推送到 GitHub：
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+或者在 GitHub 仓库的 **Actions** 标签页中手动点击 **Run workflow**。GitHub Actions 将自动打包二进制文件与 `mods/` 示例目录并创建 Release。
