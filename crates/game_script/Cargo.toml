@@ -1,0 +1,16 @@
+[package]
+name = "game_script"
+version.workspace = true
+edition.workspace = true
+description = "Universal two-tier plugin-based Scheme scripting engine for game modding and logic execution"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ouut/2d_minecraft"
+readme = "README.md"
+keywords = ["game", "scripting", "scheme", "plugin", "modding"]
+categories = ["game-development"]
+
+[dependencies]
+steel-core = { workspace = true, features = ["sync"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+crossbeam-queue = "0.3"

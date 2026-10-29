@@ -41,19 +41,25 @@ flowchart TD
         G["Agent G: crates/game_server\n(Axum HTTP WASM静态托管 / WS会话看门狗 / Latch流水线)"]
     end
 
+    subgraph Phase4["Phase 4: 通用脚本引擎与双层插件系统扩展层"]
+        H["Agent H: crates/game_script\n(通用双层插件架构 / 事务型 CommandSink / 看门狗 / SteelVal<->JSON)"]
+    end
+
     Phase0 ==> A & B & C & D & E
     A & B & C & D & E ==> App
     Phase0 ==> F
     F ==> G
+    Phase0 ==> H
     G & App ==> WebAndMultiplayer["端到端验证 (浏览器 WASM 直连 + 跨游戏移植)"]
 ```
 
 > [!IMPORTANT]
 > **核心铁律（DAG 依赖不变量）**：
-> 1. `voxel_core` 与 `game_net` 属于 Layer 0 纯契约层，不依赖 Workspace 内的任何业务 Crate。
-> 2. `voxel_gen`、`voxel_sim`、`voxel_ecs`、`voxel_script`、`voxel_render` **只依赖 `voxel_core`**，各叶节点之间绝对禁止产生横向依赖！
-> 3. `game_server` 仅单向依赖 `game_net` 与网络通用库（`tokio`, `axum`, `tower-http`），与具体游戏业务（体素/地图/渲染）零耦合。
-> 4. `voxel_app` 负责顶层组装，连接游戏仿真与网络服务。
+> 1. `voxel_core`、`game_net` 与 `game_script` 属于 Layer 0 纯契约与抽象层，不依赖 Workspace 内的任何业务 Crate。
+> 2. `voxel_gen`、`voxel_sim`、`voxel_ecs`、`voxel_render` 只依赖 `voxel_core`。
+> 3. `voxel_script` 仅单向依赖 `voxel_core` 与 `game_script`，作为体素业务插件挂载。
+> 4. `game_server` 仅单向依赖 `game_net` 与通用网络库，与具体游戏业务零耦合。
+> 5. `voxel_app` 负责顶层组装，连接游戏仿真、网络网关与脚本引擎。
 
 ---
 
@@ -63,7 +69,7 @@ flowchart TD
 
 | Agent 角色 | 所属阶段 | 允许写入路径 (Write Scope) | 只读参考路径 (Read-Only) | 禁止触碰路径 | 独立验证命令 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Lead Agent** | Phase 0 & 3.0 | `/Cargo.toml`<br>`crates/voxel_core/**`<br>各 Crate 初始 `Cargo.toml` | 全局 | — | `cargo test -p voxel_core` |
+| **Lead Agent** | Phase 0 & 3.0 & 4.0 | `/Cargo.toml`<br>`crates/voxel_core/**`<br>各 Crate 初始 `Cargo.toml` | 全局 | — | `cargo test -p voxel_core` |
 | **Agent A**<br>(地形生成专家) | Phase 1 | `crates/voxel_gen/src/**` | `crates/voxel_core/src/**` | 根 `Cargo.toml` 及其他所有 Crate | `cargo test -p voxel_gen` |
 | **Agent B**<br>(物理光照专家) | Phase 1 | `crates/voxel_sim/src/**` | `crates/voxel_core/src/**` | 根 `Cargo.toml` 及其他所有 Crate | `cargo test -p voxel_sim` |
 | **Agent C**<br>(ECS与AI专家) | Phase 1 | `crates/voxel_ecs/src/**` | `crates/voxel_core/src/**` | 根 `Cargo.toml` 及其他所有 Crate | `cargo test -p voxel_ecs` |
@@ -71,7 +77,8 @@ flowchart TD
 | **Agent E**<br>(等距渲染与UI专家) | Phase 1 | `crates/voxel_render/src/**` | `crates/voxel_core/src/**` | 根 `Cargo.toml` 及其他所有 Crate | `cargo check -p voxel_render` |
 | **Agent F**<br>(网络协议专家) | Phase 3 | `crates/game_net/src/**`<br>`crates/game_net/Cargo.toml` | 全局协议标准 | 业务游戏代码目录 | `cargo test -p game_net` |
 | **Agent G**<br>(网关与服务端专家) | Phase 3 | `crates/game_server/src/**`<br>`crates/game_server/Cargo.toml`<br>`assets/web/**` | `crates/game_net/**` | 业务游戏代码目录 | `cargo test -p game_server` |
-| **Integrator Agent** | Phase 2 & 3.2 | `crates/voxel_app/src/**`<br>`docs/**` | 全部 `crates/**` 与 `mods/**` | 尽量不改动叶节点底层实现 | `cargo test --workspace` |
+| **Agent H**<br>(通用脚本与插件专家) | Phase 4 | `crates/game_script/src/**`<br>`crates/game_script/Cargo.toml` | 全局架构与规范 | 业务游戏代码目录 | `cargo test -p game_script` |
+| **Integrator Agent** | Phase 2 & 3.2 & 4.2 | `crates/voxel_app/src/**`<br>`docs/**` | 全部 `crates/**` 与 `mods/**` | 尽量不改动叶节点底层实现 | `cargo test --workspace` |
 
 > [!TIP]
 > **为什么连 `Cargo.toml` 都不会冲突？**
@@ -265,3 +272,23 @@ Gate 0 通过后，以下 5 个 Agent **同时启动、并行编码**：
 - 在 `voxel_core` 中对齐序列化，在 `voxel_app` 中挂载网络网关。
 - 验证浏览器访问 `http://localhost:8080/` 加载静态资源并直连 WebSocket。
 - 编写并在 `docs/CROSS_GAME_PORTING.md` 中产出《跨游戏网络模块移植指南》，移交 `LispCraft` 与 `NoCraft` 对应 Agent 自主对接。
+
+---
+
+### Phase 4：通用脚本引擎与双层插件系统扩展 (Generic Script Engine & Plugin System)
+
+在通用网络底座完成后，启动 Phase 4 脚本抽象化演进，将三款游戏共同依赖的 Steel Scheme 虚拟机基础设施下沉为独立的通用层：
+
+#### ⚙️ Agent H：`crates/game_script`（通用脚本与插件系统专家）
+- **独占路径**：`crates/game_script/src/**` 与 `crates/game_script/Cargo.toml`
+- **依赖输入**：`steel-core` (0.8.3) + `serde` + `serde_json`（零体素业务依赖，跨三款游戏通用）
+- **交付接口**：
+  - `pub trait ScriptPlugin`：定义 `name(&self) -> &'static str` 与 `build(&self, ctx: &mut PluginContext) -> Result<(), PluginError>`（Bevy 风格装配）。
+  - `pub struct CommandSink`：无锁事务型指令总线，提供 `emit<C: AnyCommand>(&self, cmd: C)` 与 `drain(&self) -> Vec<Box<dyn AnyCommand>>`，彻底杜绝借用冲突。
+  - `pub struct ScriptApp`：Builder 模式宿主，支持 `.add_plugin(plugin)`、`.run(script)`、`.eval_repl(expr)`、`.safe_eval(expr, timeout_ms)`（带 Watchdog 超时保护）。
+  - `interop.rs`：`steel_val_to_json` 与 `json_to_steel_val`（Scheme 与 JSON 递归无损转换）。
+  - `watcher.rs`：`ScriptWatcher`（扫描脚本目录 `mtime`，支持自动热重载检测）。
+- **独立验收**：编写单元与集成测试（覆盖插件装配、指令发射、REPL 求值、Watchdog 超时截断与 JSON 互转），运行 `cargo test -p game_script`。
+
+#### 🎯 Integrator Agent：跨游戏移植指南更新
+- 在 `docs/CROSS_GAME_PORTING.md` 中增加《通用脚本引擎与插件体系接入指南》，给出 `2d_minecraft`、`LispCraft` 与 `NoCraft` 的适配代码范式。

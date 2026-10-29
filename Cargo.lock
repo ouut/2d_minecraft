@@ -778,6 +778,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "game_script"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-queue",
+ "serde",
+ "serde_json",
+ "steel-core",
+]
+
+[[package]]
 name = "game_server"
 version = "0.1.0"
 dependencies = [
@@ -1131,6 +1141,21 @@ dependencies = [
  "zerofrom",
  "zerotrie",
  "zerovec",
+]
+
+[[package]]
+name = "im"
+version = "15.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0acd33ff0285af998aaf9b57342af478078f53492322fafc47450e09397e0e9"
+dependencies = [
+ "bitmaps",
+ "rand_core 0.6.4",
+ "rand_xoshiro",
+ "serde",
+ "sized-chunks",
+ "typenum",
+ "version_check",
 ]
 
 [[package]]
@@ -2016,6 +2041,7 @@ dependencies = [
  "glob",
  "httparse",
  "icu_casemap",
+ "im",
  "im-lists",
  "im-rc",
  "js-sys",

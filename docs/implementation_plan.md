@@ -16,9 +16,9 @@
 | **交互与拾取** | 射线拾取 + 锁定 `Z` 层平面框选混合模式 | 支持点击可见方块表面，以及锁定当前 `slice_z` 矩形框选下达挖掘/建造指令 |
 | **贴图资产** | 内置程序化像素风等距纹理图集 (Procedural Atlas) | 启动时自动合成带明暗三面、像素噪点、流体半透明与裂纹动画的瓦片图集 |
 | **三大玩法模式** | 主角生存探索 + 殖民地 AI 调度 + 上帝世界编辑器 | 同一世界内一键无缝切换（附身控制主角 / 框选蓝图派发 AI 任务 / 自由笔刷改地形） |
-| **Mod 脚本系统** | `steel-core` (Steel Scheme VM) | 动态方块注册、事件钩子、世界/殖民地 API、自定义 Mod 工具笔刷、`F5` 热重载与游戏内 REPL 控制台 |
+| **Mod 脚本系统** | 通用 `game_script` + `steel-core 0.8.3` | 工业级双层插件架构 (`ScriptPlugin`)、无借用冲突的指令总线 (`CommandSink`)、看门狗超时中断 (`Watchdog`)、文件监听动态热重载与游戏内交互式 REPL 控制台 |
 | **通用网络与网关** | `game_net` + `game_server` (`Axum` + `WebSocket`) | 内置 HTTP WASM 静态托管、原生 WebSocket 全双工、测试期 JSON / 正式期二进制双模自适应、Token 会话看门狗与高频移动锁存 |
-| **跨端跨游戏复用** | WebAssembly 浏览器直连 + 3 游戏共享底座 | 浏览器开箱即玩；支持向 `LispCraft` 与 `NoCraft` 零修改平移复用 |
+| **跨端跨游戏复用** | WebAssembly 浏览器直连 + 3 游戏共享三大底座 | 浏览器开箱即玩；`game_net`、`game_server`、`game_script` 均支持向 `LispCraft` 与 `NoCraft` 零修改平移复用 |
 
 ---
 
@@ -32,21 +32,22 @@
 
 ```mermaid
 flowchart BT
-    subgraph Layer0["Layer 0: 核心数据契约层 (Phase 0 冻结)"]
+    subgraph Layer0["Layer 0: 核心数据与通用底座契约层 (冻结)"]
         Core["crates/voxel_core\n(Voxel, Chunk, BlockRegistry, IsoCamera,\nWorldAccess Trait, EngineCommand)"]
         NetContract["crates/game_net\n(ClientEnvelope, ServerEnvelope,\nDualCodec: JSON & Postcard Binary)"]
+        ScriptCore["crates/game_script\n(通用插件式 Scheme 引擎底座)\n(ScriptPlugin, CommandSink, Watchdog, SteelVal<->JSON)"]
     end
 
     subgraph Layer1["Layer 1: 正交叶节点层 (并发开发层，互不交叉依赖)"]
         Gen["crates/voxel_gen\n[Agent A: MC 3D 地形/洞穴/矿脉]\ndeps: voxel_core, noise, rand"]
         Sim["crates/voxel_sim\n[Agent B: 光照/流体/重力与坍塌]\ndeps: voxel_core"]
         ECS["crates/voxel_ecs\n[Agent C: flecs_ecs/3D A*寻路/殖民地/主角]\ndeps: voxel_core, flecs_ecs"]
-        Script["crates/voxel_script\n[Agent D: Steel Scheme Mod/REPL/热重载]\ndeps: voxel_core, steel-core"]
+        Script["crates/voxel_script\n[Agent D: Steel Scheme Mod适配器/VoxelPlugin]\ndeps: voxel_core, game_script"]
         Render["crates/voxel_render\n[Agent E: 程序化图集/2.5D渲染/UI]\ndeps: voxel_core, macroquad"]
         Server["crates/game_server\n[Agent G: Axum HTTP WASM托管/WS会话网关]\ndeps: game_net, tokio, axum, tower-http"]
     end
 
-    subgraph Layer2["Layer 2: 顶层集成宿主层 (Phase 2 & Phase 3 聚合联调)"]
+    subgraph Layer2["Layer 2: 顶层集成宿主层 (聚合联调)"]
         App["crates/voxel_app\n[Integrator Agent: 宿主窗口/单机或联机模式]\ndeps: voxel_core, game_net, game_server, 各叶节点 Crate"]
     end
 
@@ -54,6 +55,7 @@ flowchart BT
     Sim --> Core
     ECS --> Core
     Script --> Core
+    Script --> ScriptCore
     Render --> Core
     Server --> NetContract
 
@@ -80,24 +82,22 @@ flowchart BT
 │   ├── index.html
 │   └── pkg/
 └── crates/
-    ├── voxel_core/                  # [Layer 0 - 核心游戏数据契约]
-    ├── game_net/                    # [Layer 0 - 通用网络信封与双模序列化契约 (跨3个游戏复用)]
+    ├── voxel_core/                  # [Layer 0 - 核心体素数据契约]
+    ├── game_net/                    # [Layer 0 - 通用网络信封与双模序列化 (已发布 crates.io)]
+    ├── game_server/                 # [Layer 1 - 通用 HTTP WASM 托管与 WebSocket 网关 (已发布 crates.io)]
+    ├── game_script/                 # [Layer 0 - 通用双层插件式 Scheme 脚本引擎 (跨3个游戏复用)]
     │   ├── Cargo.toml
     │   └── src/
-    │       ├── lib.rs               # 导出 ClientEnvelope, ServerEnvelope
-    │       ├── envelope.rs          # 泛型信封定义 (Auth, Ping, Input, Command, Snapshot, Event)
-    │       └── codec.rs             # DualCodec (JSON 文本与 Postcard 二进制自适应)
-    ├── game_server/                 # [Layer 1 - 通用 HTTP WASM 托管与 WebSocket 会话网关]
-    │   ├── Cargo.toml
-    │   └── src/
-    │       ├── lib.rs
-    │       ├── gateway.rs           # Axum HTTP + WS 路由 (带 COOP/COEP 安全头)
-    │       ├── session.rs           # SessionManager (Token, 心跳看门狗, Grace Period)
-    │       └── pipeline.rs          # Latest-Only Latch 锁存器与 FIFO 指令队列
+    │       ├── lib.rs               # 导出 ScriptApp, ScriptPlugin, CommandSink 等
+    │       ├── plugin.rs            # ScriptPlugin Trait 与 PluginContext
+    │       ├── command.rs           # 事务型指令总线 CommandSink 与 AnyCommand
+    │       ├── app.rs               # ScriptApp (Builder 模式、安全求值、Watchdog)
+    │       ├── interop.rs           # SteelVal <-> JSON 双向序列化网桥
+    │       └── watcher.rs           # 脚本目录 mtime 自动热重载监听器
+    ├── voxel_script/                # [Layer 1 - 2d_minecraft 体素世界 Scheme 插件适配层]
     ├── voxel_gen/                   # [Layer 1 - 地形/洞穴生成]
     ├── voxel_sim/                   # [Layer 1 - 光照/流体/重力坍塌]
     ├── voxel_ecs/                   # [Layer 1 - flecs_ecs / 3D A*寻路]
-    ├── voxel_script/                # [Layer 1 - Steel Scheme VM / Mod系统]
     ├── voxel_render/                # [Layer 1 - 2.5D 切片渲染 / UI]
     └── voxel_app/                   # [Layer 2 - 顶层集成入口]
 ```
@@ -227,6 +227,23 @@ flowchart BT
 
 ---
 
+### 3.9 通用脚本引擎与双层插件系统 (`game_script`)
+1. **工业级双层插件架构 (Two-Tier Plugin Architecture)**：
+   - **Layer 1: 宿主 Rust 原生插件 (`ScriptPlugin` Trait)**：采用 Bevy 风格插件模式，各系统实现 `build(&self, ctx: &mut PluginContext)`，向 VM 注册原生函数。
+   - **Layer 2: Scheme 脚本层 Mod**：由用户、策划或 Mod 开发者通过 `.scm` 脚本调用已注册原语，实现动态物品注册、逻辑计算与热重载。
+2. **事务型指令总线 (`CommandSink`)**：
+   - 彻底解决脚本调用 Rust 时的借用重入与死锁问题。
+   - 脚本不直接强行修改游戏实体或世界内存，而是向 `CommandSink` 发射类型化指令，在游戏 Tick 的安全同步屏障处集中原子结算。
+3. **安全沙箱与看门狗超时中断 (`Watchdog`)**：
+   - 基于 `steel::ThreadStateController` 实现执行预算与超时看门狗保护。
+   - 玩家或开发者在 REPL 中执行死循环或慢查询时自动中断并抛出异常，游戏进程保持 100% 稳定运行。
+4. **跨语言通用数据网桥 (`SteelVal <-> JSON`)**：
+   - 内置无损递归转换，支持 Rust `serde_json::Value` 与 Scheme `SteelVal` 自由互转。
+5. **动态热重载监听器 (`Watcher`)**：
+   - 自动扫描脚本目录的 `mtime`，变更时自动重新求值、刷新事件钩子与配方。
+
+---
+
 ## 4. 分阶段实施路线图 (DAG 并发演进模型)
 
 配套的 AI Agent 协同并发执行细则详见《分阶段 AI Agent 协同并发工作手册》(`agent_concurrency_workflow.md`)：
@@ -250,3 +267,7 @@ flowchart BT
      - 在 `voxel_core` 中对齐网络序列化字段，`voxel_app` 挂载网关。
      - 验证浏览器访问 `http://localhost:8080/` 加载静态资源并建立 WebSocket 联机。
    - **Phase 3.3：跨游戏移植指南交付**：产出 `docs/CROSS_GAME_PORTING.md`，赋能 `LispCraft` 与 `NoCraft` 负责 Agent 自主接入。
+5. **Phase 4：通用脚本引擎与双层插件系统扩展 (Generic Script Engine & Plugin System)**
+   - **Phase 4.0：模块骨架与契约配置 (Lead Agent)**：在 Workspace 引入 `crates/game_script` 依赖。
+   - **Phase 4.1：通用插件引擎开发 (`crates/game_script` — Agent H)**：实现 `ScriptPlugin` Trait、`CommandSink`、`ScriptApp` Builder、看门狗中断保护、`SteelVal <-> JSON` 互转与文件监听器。
+   - **Phase 4.2：跨游戏集成与移植规范输出 (Integrator Agent)**：更新 `docs/CROSS_GAME_PORTING.md`，指导 `LispCraft` 与 `NoCraft` 接入通用脚本底座。
