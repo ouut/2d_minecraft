@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag Name (e.g. v0.1.0)'
+        description: 'Release Tag Name (e.g. v0.2.0)'
         required: true
-        default: 'v0.1.0'
+        default: 'v0.2.0'
 
 permissions:
   contents: write
@@ -24,16 +24,19 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            binary_name: voxel_app
-            asset_bundle: voxel_app-linux-x86_64.tar.gz
+            binary_ext: ""
+            asset_bundle: voxel_suite-linux-x86_64.tar.gz
+            legacy_bundle: voxel_app-linux-x86_64.tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            binary_name: voxel_app.exe
-            asset_bundle: voxel_app-windows-x86_64.zip
+            binary_ext: ".exe"
+            asset_bundle: voxel_suite-windows-x86_64.zip
+            legacy_bundle: voxel_app-windows-x86_64.zip
           - os: macos-14
             target: aarch64-apple-darwin
-            binary_name: voxel_app
-            asset_bundle: voxel_app-macos-arm64.tar.gz
+            binary_ext: ""
+            asset_bundle: voxel_suite-macos-arm64.tar.gz
+            legacy_bundle: voxel_app-macos-arm64.tar.gz
 
     steps:
       - name: Checkout repository
@@ -50,39 +53,79 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
 
-      - name: Build release binary
-        run: cargo build --release --bin voxel_app --target ${{ matrix.target }}
+      - name: Build release binaries (voxel_app, voxel_web, voxel_server)
+        run: cargo build --release --bin voxel_app --bin voxel_web --bin voxel_server --target ${{ matrix.target }}
 
       - name: Package artifacts (Linux & macOS)
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} dist/
+          cp target/${{ matrix.target }}/release/voxel_app dist/
+          cp target/${{ matrix.target }}/release/voxel_web dist/
+          cp target/${{ matrix.target }}/release/voxel_server dist/
           cp -r mods dist/
+          cp -r assets dist/
           cp README.md dist/
           cd dist
           tar -czf ../${{ matrix.asset_bundle }} *
+          cp ../${{ matrix.asset_bundle }} ../${{ matrix.legacy_bundle }}
 
       - name: Package artifacts (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} dist/
+          cp target/${{ matrix.target }}/release/voxel_app.exe dist/
+          cp target/${{ matrix.target }}/release/voxel_web.exe dist/
+          cp target/${{ matrix.target }}/release/voxel_server.exe dist/
           cp -r mods dist/
+          cp -r assets dist/
           cp README.md dist/
           cd dist
           7z a ../${{ matrix.asset_bundle }} *
+          cp ../${{ matrix.asset_bundle }} ../${{ matrix.legacy_bundle }}
 
-      - name: Upload Build Artifact
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_bundle }}
-          path: ${{ matrix.asset_bundle }}
+          name: artifacts-${{ matrix.target }}
+          path: |
+            ${{ matrix.asset_bundle }}
+            ${{ matrix.legacy_bundle }}
+
+  build-wasm:
+    name: Build WebAssembly (wasm32)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Build WASM 3D client
+        run: cargo build --target wasm32-unknown-unknown -p voxel_web --release
+
+      - name: Package WASM bundle
+        run: |
+          mkdir -p dist-wasm
+          cp assets/web/index.html dist-wasm/
+          cp assets/web/mq_js_bundle.js dist-wasm/
+          cp target/wasm32-unknown-unknown/release/voxel_web.wasm dist-wasm/
+          cd dist-wasm
+          zip -r ../voxel_web-wasm.zip *
+
+      - name: Upload WASM Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: voxel_web-wasm.zip
+          path: voxel_web-wasm.zip
 
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [build, build-wasm]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -98,10 +141,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name || inputs.tag_name }}
-          name: Release ${{ github.ref_name || inputs.tag_name }}
-          draft: false
-          prerelease: false
           files: release_assets/*
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
