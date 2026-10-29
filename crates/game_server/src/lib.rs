@@ -14,10 +14,12 @@ pub mod session;
 // Direct re-exports of core server types
 pub use pipeline::IngestionPipeline;
 pub use server::{
-    start_server, start_server_with_static, GenericGameServer, ServerConfig, ServerContext,
-    ServerHandle,
+    start_server, start_server_with_embedded, start_server_with_static, GenericGameServer,
+    PlayerSender, ServerConfig, ServerContext, ServerHandle, StaticAssetSource,
 };
-pub use session::{SessionManager, SessionState, SessionStatus, SessionTimeoutEvent};
+pub use session::{
+    SessionEvent, SessionManager, SessionState, SessionStatus, SessionTimeoutEvent,
+};
 
 // Re-export Layer 0 protocol types for downstream convenience
 pub use game_net::{ClientEnvelope, CodecError, CodecFormat, DualCodec, PlayerId, ServerEnvelope};

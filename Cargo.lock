@@ -770,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "game_net"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "postcard",
  "serde",
@@ -779,7 +779,7 @@ dependencies = [
 
 [[package]]
 name = "game_script"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossbeam-queue",
  "serde",
@@ -789,9 +789,10 @@ dependencies = [
 
 [[package]]
 name = "game_server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
+ "crossbeam-queue",
  "dashmap 5.5.3",
  "futures-util",
  "game_net",
@@ -2462,7 +2463,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "voxel_app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "macroquad",
  "voxel_core",
@@ -2475,11 +2476,11 @@ dependencies = [
 
 [[package]]
 name = "voxel_core"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "voxel_ecs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "flecs_ecs",
  "voxel_core",
@@ -2487,7 +2488,7 @@ dependencies = [
 
 [[package]]
 name = "voxel_gen"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "noise",
  "rand 0.8.8",
@@ -2496,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "voxel_render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "macroquad",
  "voxel_core",
@@ -2504,7 +2505,7 @@ dependencies = [
 
 [[package]]
 name = "voxel_script"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "steel-core",
  "voxel_core",
@@ -2512,7 +2513,7 @@ dependencies = [
 
 [[package]]
 name = "voxel_sim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "voxel_core",
 ]

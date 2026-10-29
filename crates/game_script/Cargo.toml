@@ -13,4 +13,4 @@ categories = ["game-development"]
 steel-core = { workspace = true, features = ["sync"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-crossbeam-queue = "0.3"
+crossbeam-queue = { workspace = true }

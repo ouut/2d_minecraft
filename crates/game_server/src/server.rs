@@ -19,12 +19,21 @@ use futures_util::{SinkExt, StreamExt};
 use game_net::{ClientEnvelope, DualCodec, PlayerId, ServerEnvelope};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tower_http::services::ServeDir;
 
 use crate::pipeline::IngestionPipeline;
-use crate::session::{SessionManager, SessionTimeoutEvent};
+use crate::session::{SessionEvent, SessionManager, SessionTimeoutEvent};
+
+/// Source of static assets for web client hosting.
+#[derive(Clone, Debug)]
+pub enum StaticAssetSource {
+    /// Host files from a filesystem directory.
+    FileSystem(PathBuf),
+    /// Host embedded in-memory static files `(path, bytes, mime)`.
+    Embedded(&'static [(&'static str, &'static [u8], &'static str)]),
+}
 
 /// Configuration for the generic game server.
 #[derive(Debug, Clone)]
@@ -35,8 +44,12 @@ pub struct ServerConfig {
     pub heartbeat_timeout_secs: u64,
     /// Grace period in seconds for disconnected sessions to reconnect before termination.
     pub grace_period_secs: u64,
-    /// Optional directory to serve static assets (HTML, WASM, JS).
-    pub static_dir: Option<PathBuf>,
+    /// Static asset source (FileSystem or Embedded in-memory).
+    pub static_assets: Option<StaticAssetSource>,
+    /// Maximum allowed WebSocket frame size in bytes (default: 64KB).
+    pub max_frame_size: usize,
+    /// Maximum commands accepted from a single player within a single simulation tick (default: 50).
+    pub max_commands_per_tick: usize,
 }
 
 impl Default for ServerConfig {
@@ -45,7 +58,9 @@ impl Default for ServerConfig {
             bind_addr: SocketAddr::from(([127, 0, 0, 1], 8080)),
             heartbeat_timeout_secs: 10,
             grace_period_secs: 60,
-            static_dir: None,
+            static_assets: None,
+            max_frame_size: 64 * 1024,
+            max_commands_per_tick: 50,
         }
     }
 }
@@ -79,8 +94,81 @@ impl ServerConfig {
 
     /// Sets the static directory for web client hosting.
     pub fn with_static_dir(mut self, dir: impl Into<PathBuf>) -> Self {
-        self.static_dir = Some(dir.into());
+        self.static_assets = Some(StaticAssetSource::FileSystem(dir.into()));
         self
+    }
+
+    /// Sets the static asset source.
+    pub fn with_static_assets(mut self, assets: StaticAssetSource) -> Self {
+        self.static_assets = Some(assets);
+        self
+    }
+
+    /// Sets the embedded static assets.
+    pub fn with_embedded_assets(
+        mut self,
+        assets: &'static [(&'static str, &'static [u8], &'static str)],
+    ) -> Self {
+        self.static_assets = Some(StaticAssetSource::Embedded(assets));
+        self
+    }
+
+    /// Sets the maximum frame size in bytes.
+    pub fn with_max_frame_size(mut self, size: usize) -> Self {
+        self.max_frame_size = size;
+        self
+    }
+
+    /// Sets the maximum commands allowed per player per tick.
+    pub fn with_max_commands_per_tick(mut self, limit: usize) -> Self {
+        self.max_commands_per_tick = limit;
+        self
+    }
+}
+
+/// Player network output channel supporting backpressure protection:
+/// - Discrete events/control envelopes (`AuthSuccess`, `Pong`, `Event`, `Kick`) are strictly delivered via FIFO channel.
+/// - Authoritative snapshots (`Snapshot`) are delivered with a latest-only "Drop Oldest Snapshot" policy
+///   to prevent memory accumulation and OOM on slow or blocked client connections.
+#[derive(Clone)]
+pub struct PlayerSender<TSnapshot, TEvent> {
+    event_tx: mpsc::UnboundedSender<ServerEnvelope<TSnapshot, TEvent>>,
+    snapshot_tx: Arc<watch::Sender<Option<TSnapshot>>>,
+}
+
+impl<TSnapshot: Clone, TEvent> PlayerSender<TSnapshot, TEvent> {
+    pub fn new(
+        event_tx: mpsc::UnboundedSender<ServerEnvelope<TSnapshot, TEvent>>,
+        snapshot_tx: Arc<watch::Sender<Option<TSnapshot>>>,
+    ) -> Self {
+        Self {
+            event_tx,
+            snapshot_tx,
+        }
+    }
+
+    /// Sends a server envelope to the client.
+    ///
+    /// For discrete control messages and simulation events (`AuthSuccess`, `Pong`, `Event`, `Kick`),
+    /// messages are queued into the FIFO event channel without loss.
+    ///
+    /// For high-frequency world snapshots (`Snapshot`), the latest snapshot replaces any pending
+    /// unconsumed snapshot ("Drop Oldest Snapshot"), preventing memory accumulation and OOM
+    /// under slow-client backpressure.
+    ///
+    /// Returns `true` if dispatched, or `false` if the connection has been terminated.
+    pub fn send(&self, envelope: ServerEnvelope<TSnapshot, TEvent>) -> bool {
+        match envelope {
+            ServerEnvelope::Snapshot(snap) => {
+                if self.snapshot_tx.receiver_count() == 0 {
+                    false
+                } else {
+                    self.snapshot_tx.send_replace(Some(snap));
+                    true
+                }
+            }
+            other => self.event_tx.send(other).is_ok(),
+        }
     }
 }
 
@@ -88,17 +176,21 @@ impl ServerConfig {
 pub struct ServerContext<TInput, TCmd, TSnapshot, TEvent> {
     pub session_manager: SessionManager,
     pub pipeline: IngestionPipeline<TInput, TCmd>,
-    pub connections: DashMap<PlayerId, mpsc::UnboundedSender<ServerEnvelope<TSnapshot, TEvent>>>,
+    pub connections: DashMap<PlayerId, PlayerSender<TSnapshot, TEvent>>,
     pub current_tick: AtomicU64,
+    pub config: ServerConfig,
 }
 
 impl<TInput, TCmd, TSnapshot, TEvent> ServerContext<TInput, TCmd, TSnapshot, TEvent> {
-    pub fn new(heartbeat_timeout: Duration, grace_period: Duration) -> Self {
+    pub fn new(config: ServerConfig) -> Self {
+        let heartbeat_timeout = Duration::from_secs(config.heartbeat_timeout_secs);
+        let grace_period = Duration::from_secs(config.grace_period_secs);
         Self {
             session_manager: SessionManager::new(heartbeat_timeout, grace_period),
             pipeline: IngestionPipeline::new(),
             connections: DashMap::new(),
             current_tick: AtomicU64::new(0),
+            config,
         }
     }
 }
@@ -113,7 +205,7 @@ pub struct ServerHandle<TInput, TCmd, TSnapshot, TEvent> {
     watchdog_task: JoinHandle<()>,
 }
 
-impl<TInput, TCmd, TSnapshot, TEvent> ServerHandle<TInput, TCmd, TSnapshot, TEvent> {
+impl<TInput, TCmd, TSnapshot: Clone, TEvent> ServerHandle<TInput, TCmd, TSnapshot, TEvent> {
     /// Returns the local socket address the server bound to.
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
@@ -139,12 +231,17 @@ impl<TInput, TCmd, TSnapshot, TEvent> ServerHandle<TInput, TCmd, TSnapshot, TEve
         self.context.pipeline.drain_commands()
     }
 
+    /// Drains all player lifecycle events (PlayerJoined, PlayerDisconnected, PlayerReconnected, PlayerTerminated).
+    pub fn drain_session_events(&self) -> Vec<SessionEvent> {
+        self.context.session_manager.drain_session_events()
+    }
+
     /// Sends a server envelope to a specific player.
     ///
     /// Returns `true` if the player connection was found and the message queued.
     pub fn send_to(&self, player_id: PlayerId, envelope: ServerEnvelope<TSnapshot, TEvent>) -> bool {
         if let Some(sender) = self.context.connections.get(&player_id) {
-            sender.send(envelope).is_ok()
+            sender.send(envelope)
         } else {
             false
         }
@@ -160,7 +257,45 @@ impl<TInput, TCmd, TSnapshot, TEvent> ServerHandle<TInput, TCmd, TSnapshot, TEve
     {
         let mut count = 0;
         for entry in self.context.connections.iter() {
-            if entry.value().send(envelope.clone()).is_ok() {
+            if entry.value().send(envelope.clone()) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Multicasts a server envelope to a targeted list of players.
+    ///
+    /// Avoids $O(N^2)$ bandwidth explosion by restricting delivery to specific recipients.
+    pub fn multicast(&self, recipients: &[PlayerId], envelope: ServerEnvelope<TSnapshot, TEvent>) -> usize
+    where
+        TSnapshot: Clone,
+        TEvent: Clone,
+    {
+        let mut count = 0;
+        for &pid in recipients {
+            if let Some(sender) = self.context.connections.get(&pid) {
+                if sender.send(envelope.clone()) {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    /// Broadcasts a server envelope to connected players that satisfy a spatial or logical filter predicate.
+    ///
+    /// Solves $O(N^2)$ bandwidth scaling in large multiplayer worlds with multiple viewports.
+    pub fn broadcast_filter<F>(&self, envelope: ServerEnvelope<TSnapshot, TEvent>, filter: F) -> usize
+    where
+        TSnapshot: Clone,
+        TEvent: Clone,
+        F: Fn(PlayerId) -> bool,
+    {
+        let mut count = 0;
+        for entry in self.context.connections.iter() {
+            let pid = *entry.key();
+            if filter(pid) && entry.value().send(envelope.clone()) {
                 count += 1;
             }
         }
@@ -243,9 +378,7 @@ where
 {
     /// Creates a new `GenericGameServer` instance from configuration.
     pub fn new(config: ServerConfig) -> Self {
-        let heartbeat_timeout = Duration::from_secs(config.heartbeat_timeout_secs);
-        let grace_period = Duration::from_secs(config.grace_period_secs);
-        let context = Arc::new(ServerContext::new(heartbeat_timeout, grace_period));
+        let context = Arc::new(ServerContext::new(config.clone()));
         Self { config, context }
     }
 
@@ -279,10 +412,15 @@ where
         self.context.pipeline.drain_commands()
     }
 
+    /// Drains all player lifecycle events (PlayerJoined, PlayerDisconnected, PlayerReconnected, PlayerTerminated).
+    pub fn drain_session_events(&self) -> Vec<SessionEvent> {
+        self.context.session_manager.drain_session_events()
+    }
+
     /// Sends a server envelope to a specific player.
     pub fn send_to(&self, player_id: PlayerId, envelope: ServerEnvelope<TSnapshot, TEvent>) -> bool {
         if let Some(sender) = self.context.connections.get(&player_id) {
-            sender.send(envelope).is_ok()
+            sender.send(envelope)
         } else {
             false
         }
@@ -292,7 +430,35 @@ where
     pub fn broadcast(&self, envelope: ServerEnvelope<TSnapshot, TEvent>) -> usize {
         let mut count = 0;
         for entry in self.context.connections.iter() {
-            if entry.value().send(envelope.clone()).is_ok() {
+            if entry.value().send(envelope.clone()) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Multicasts a server envelope to a targeted list of players.
+    pub fn multicast(&self, recipients: &[PlayerId], envelope: ServerEnvelope<TSnapshot, TEvent>) -> usize {
+        let mut count = 0;
+        for &pid in recipients {
+            if let Some(sender) = self.context.connections.get(&pid) {
+                if sender.send(envelope.clone()) {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    /// Broadcasts a server envelope to connected players that satisfy a filter predicate.
+    pub fn broadcast_filter<F>(&self, envelope: ServerEnvelope<TSnapshot, TEvent>, filter: F) -> usize
+    where
+        F: Fn(PlayerId) -> bool,
+    {
+        let mut count = 0;
+        for entry in self.context.connections.iter() {
+            let pid = *entry.key();
+            if filter(pid) && entry.value().send(envelope.clone()) {
                 count += 1;
             }
         }
@@ -311,10 +477,39 @@ where
             .route("/ws", get(ws_handler))
             .with_state(Arc::clone(&context));
 
-        // Attach static file serving if static_dir is specified
-        if let Some(ref static_path) = self.config.static_dir {
-            let serve_dir = ServeDir::new(static_path).append_index_html_on_directories(true);
-            router = router.fallback_service(serve_dir);
+        // Attach static asset serving (FileSystem or Embedded WASM/HTML)
+        if let Some(ref assets) = self.config.static_assets {
+            match assets {
+                StaticAssetSource::FileSystem(static_path) => {
+                    let serve_dir =
+                        ServeDir::new(static_path).append_index_html_on_directories(true);
+                    router = router.fallback_service(serve_dir);
+                }
+                StaticAssetSource::Embedded(embedded_entries) => {
+                    let entries = *embedded_entries;
+                    router = router.fallback(move |uri: axum::http::Uri| async move {
+                        let req_path = uri.path();
+                        let clean_req = req_path.trim_start_matches('/');
+                        for &(path, bytes, mime) in entries {
+                            let clean_item = path.trim_start_matches('/');
+                            if clean_item == clean_req
+                                || (clean_req.is_empty()
+                                    && (clean_item == "index.html" || clean_item.is_empty()))
+                            {
+                                let mut resp = Response::new(axum::body::Body::from(bytes));
+                                if let Ok(val) = HeaderValue::from_str(mime) {
+                                    resp.headers_mut().insert(axum::http::header::CONTENT_TYPE, val);
+                                }
+                                return resp;
+                            }
+                        }
+                        Response::builder()
+                            .status(axum::http::StatusCode::NOT_FOUND)
+                            .body(axum::body::Body::from("404 Not Found"))
+                            .unwrap()
+                    });
+                }
+            }
         }
 
         // Apply COOP and COEP security headers layer
@@ -389,53 +584,102 @@ async fn ws_handler<TInput, TCmd, TSnapshot, TEvent>(
 where
     TInput: DeserializeOwned + Send + Sync + 'static,
     TCmd: DeserializeOwned + Send + Sync + 'static,
-    TSnapshot: Serialize + Send + Sync + 'static,
-    TEvent: Serialize + Send + Sync + 'static,
+    TSnapshot: Serialize + Clone + Send + Sync + 'static,
+    TEvent: Serialize + Clone + Send + Sync + 'static,
 {
     ws.on_upgrade(move |socket| handle_socket(socket, ctx))
 }
 
-/// Manages an individual WebSocket connection with dual-mode automatic negotiation.
+/// Manages an individual WebSocket connection with dual-mode automatic negotiation,
+/// backpressure protection (Drop Oldest Snapshot), and DoS protection.
 async fn handle_socket<TInput, TCmd, TSnapshot, TEvent>(
     socket: WebSocket,
     ctx: Arc<ServerContext<TInput, TCmd, TSnapshot, TEvent>>,
 ) where
     TInput: DeserializeOwned + Send + Sync + 'static,
     TCmd: DeserializeOwned + Send + Sync + 'static,
-    TSnapshot: Serialize + Send + Sync + 'static,
-    TEvent: Serialize + Send + Sync + 'static,
+    TSnapshot: Serialize + Clone + Send + Sync + 'static,
+    TEvent: Serialize + Clone + Send + Sync + 'static,
 {
     let (mut ws_sender, mut ws_receiver) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<ServerEnvelope<TSnapshot, TEvent>>();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ServerEnvelope<TSnapshot, TEvent>>();
+    let (snapshot_tx, mut snapshot_rx) = watch::channel::<Option<TSnapshot>>(None);
+    let snapshot_tx = Arc::new(snapshot_tx);
+    let player_sender = PlayerSender::new(event_tx, Arc::clone(&snapshot_tx));
 
     // Codec negotiation flag: false = Text (JSON), true = Binary (Postcard)
     let is_binary_mode = Arc::new(AtomicBool::new(false));
 
-    // Writer task: sends ServerEnvelopes encoded according to the negotiated mode
+    // Writer task: sends discrete events & latest snapshots according to negotiated mode
     let is_binary_writer = Arc::clone(&is_binary_mode);
     let writer_task = tokio::spawn(async move {
-        while let Some(envelope) = rx.recv().await {
-            let msg = if is_binary_writer.load(Ordering::Acquire) {
-                match DualCodec::encode_binary(&envelope) {
-                    Ok(bytes) => Message::Binary(bytes),
-                    Err(_) => continue,
+        loop {
+            tokio::select! {
+                biased;
+
+                maybe_event = event_rx.recv() => {
+                    match maybe_event {
+                        Some(envelope) => {
+                            let is_kick = matches!(envelope, ServerEnvelope::Kick { .. });
+                            let msg = if is_binary_writer.load(Ordering::Acquire) {
+                                match DualCodec::encode_binary(&envelope) {
+                                    Ok(bytes) => Message::Binary(bytes),
+                                    Err(_) => continue,
+                                }
+                            } else {
+                                match DualCodec::encode_text(&envelope) {
+                                    Ok(text) => Message::Text(text),
+                                    Err(_) => continue,
+                                }
+                            };
+                            if ws_sender.send(msg).await.is_err() {
+                                break;
+                            }
+                            if is_kick {
+                                let _ = ws_sender.close().await;
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
                 }
-            } else {
-                match DualCodec::encode_text(&envelope) {
-                    Ok(text) => Message::Text(text),
-                    Err(_) => continue,
+                res = snapshot_rx.changed() => {
+                    if res.is_err() {
+                        break;
+                    }
+                    let maybe_snap = {
+                        let borrow = snapshot_rx.borrow_and_update();
+                        borrow.clone()
+                    };
+                    if let Some(snap) = maybe_snap {
+                        let envelope: ServerEnvelope<TSnapshot, TEvent> =
+                        ServerEnvelope::Snapshot(snap);
+                        let msg = if is_binary_writer.load(Ordering::Acquire) {
+                            match DualCodec::encode_binary(&envelope) {
+                                Ok(bytes) => Message::Binary(bytes),
+                                Err(_) => continue,
+                            }
+                        } else {
+                            match DualCodec::encode_text(&envelope) {
+                                Ok(text) => Message::Text(text),
+                                Err(_) => continue,
+                            }
+                        };
+                        if ws_sender.send(msg).await.is_err() {
+                            break;
+                        }
+                    }
                 }
-            };
-            if ws_sender.send(msg).await.is_err() {
-                break;
             }
         }
     });
 
     let mut player_id: Option<PlayerId> = None;
     let mut session_token: Option<String> = None;
+    let mut last_command_tick: u64 = ctx.current_tick.load(Ordering::Relaxed);
+    let mut commands_in_tick: usize = 0;
 
-    // Reader loop: reads and dispatches ClientEnvelopes
+    // Reader loop: reads and dispatches ClientEnvelopes with DoS frame & command rate limits
     while let Some(msg_res) = ws_receiver.next().await {
         let msg = match msg_res {
             Ok(m) => m,
@@ -444,6 +688,15 @@ async fn handle_socket<TInput, TCmd, TSnapshot, TEvent>(
 
         let envelope: ClientEnvelope<TInput, TCmd> = match msg {
             Message::Text(text) => {
+                if text.len() > ctx.config.max_frame_size {
+                    let reason = format!(
+                        "Frame size {} bytes exceeds maximum allowed limit of {} bytes",
+                        text.len(),
+                        ctx.config.max_frame_size
+                    );
+                    let _ = player_sender.send(ServerEnvelope::Kick { reason });
+                    break;
+                }
                 is_binary_mode.store(false, Ordering::Release);
                 match DualCodec::decode_text(&text) {
                     Ok(env) => env,
@@ -451,6 +704,15 @@ async fn handle_socket<TInput, TCmd, TSnapshot, TEvent>(
                 }
             }
             Message::Binary(bytes) => {
+                if bytes.len() > ctx.config.max_frame_size {
+                    let reason = format!(
+                        "Frame size {} bytes exceeds maximum allowed limit of {} bytes",
+                        bytes.len(),
+                        ctx.config.max_frame_size
+                    );
+                    let _ = player_sender.send(ServerEnvelope::Kick { reason });
+                    break;
+                }
                 is_binary_mode.store(true, Ordering::Release);
                 match DualCodec::decode_binary(&bytes) {
                     Ok(env) => env,
@@ -470,10 +732,10 @@ async fn handle_socket<TInput, TCmd, TSnapshot, TEvent>(
                     ctx.session_manager.authenticate(&token, &client_version);
                 player_id = Some(pid);
                 session_token = Some(token);
-                ctx.connections.insert(pid, tx.clone());
+                ctx.connections.insert(pid, player_sender.clone());
 
                 let tick = ctx.current_tick.load(Ordering::Relaxed);
-                let _ = tx.send(ServerEnvelope::AuthSuccess {
+                let _ = player_sender.send(ServerEnvelope::AuthSuccess {
                     player_id: pid,
                     server_tick: tick,
                 });
@@ -486,7 +748,7 @@ async fn handle_socket<TInput, TCmd, TSnapshot, TEvent>(
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
                     .unwrap_or(0);
-                let _ = tx.send(ServerEnvelope::Pong {
+                let _ = player_sender.send(ServerEnvelope::Pong {
                     client_time_ms,
                     server_time_ms,
                 });
@@ -498,6 +760,21 @@ async fn handle_socket<TInput, TCmd, TSnapshot, TEvent>(
                 }
             }
             ClientEnvelope::Command(cmd) => {
+                let cur_tick = ctx.current_tick.load(Ordering::Relaxed);
+                if cur_tick != last_command_tick {
+                    last_command_tick = cur_tick;
+                    commands_in_tick = 0;
+                }
+                commands_in_tick += 1;
+                if commands_in_tick > ctx.config.max_commands_per_tick {
+                    let reason = format!(
+                        "Command rate limit exceeded: {} commands in tick {} (max: {})",
+                        commands_in_tick, cur_tick, ctx.config.max_commands_per_tick
+                    );
+                    let _ = player_sender.send(ServerEnvelope::Kick { reason });
+                    break;
+                }
+
                 if let Some(pid) = player_id {
                     ctx.session_manager.update_heartbeat_by_player(pid);
                     ctx.pipeline.push_command(pid, cmd);
@@ -513,7 +790,7 @@ async fn handle_socket<TInput, TCmd, TSnapshot, TEvent>(
             ctx.session_manager.disconnect(tok);
         }
     }
-    writer_task.abort();
+    let _ = tokio::time::timeout(Duration::from_millis(50), writer_task).await;
 }
 
 /// Convenience function to create and start a generic game server.
@@ -541,5 +818,20 @@ where
     TEvent: Serialize + Clone + Send + Sync + 'static,
 {
     let config = config.with_static_dir(static_dir);
+    GenericGameServer::new(config).start().await
+}
+
+/// Convenience function to create and start a server with embedded static assets.
+pub async fn start_server_with_embedded<TInput, TCmd, TSnapshot, TEvent>(
+    config: ServerConfig,
+    embedded_assets: &'static [(&'static str, &'static [u8], &'static str)],
+) -> Result<ServerHandle<TInput, TCmd, TSnapshot, TEvent>, std::io::Error>
+where
+    TInput: DeserializeOwned + Send + Sync + 'static,
+    TCmd: DeserializeOwned + Send + Sync + 'static,
+    TSnapshot: Serialize + Clone + Send + Sync + 'static,
+    TEvent: Serialize + Clone + Send + Sync + 'static,
+{
+    let config = config.with_embedded_assets(embedded_assets);
     GenericGameServer::new(config).start().await
 }

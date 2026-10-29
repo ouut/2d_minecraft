@@ -4,7 +4,7 @@ use serde_json::json;
 
 use game_script::{
     json_to_steel_val, steel_val_to_json, PluginContext, PluginError, RegisterFn, ScriptApp,
-    ScriptError, ScriptPlugin,
+    ScriptError, ScriptPlugin, SteelVal,
 };
 
 // ----------------------------------------------------------------------------
@@ -222,4 +222,224 @@ fn test_script_watcher_and_reload() {
 
     // Clean up
     let _ = fs::remove_dir_all(&test_dir);
+}
+
+// ----------------------------------------------------------------------------
+// 6. Precompiled Native Function Calling
+// ----------------------------------------------------------------------------
+
+#[test]
+fn test_precompiled_function_call() {
+    let mut app = ScriptApp::new();
+
+    app.run(r#"
+        (define (multiply a b)
+          (* a b))
+
+        (define (greet name title)
+          (string-append "Hello, " title " " name "!"))
+    "#).unwrap();
+
+    // 1. Direct call_function without string compilation
+    let res1 = app.call_function("multiply", vec![SteelVal::IntV(6), SteelVal::IntV(7)]).unwrap();
+    assert_eq!(res1, SteelVal::IntV(42));
+
+    let res2 = app.call_function("greet", vec![
+        SteelVal::StringV("Antigravity".into()),
+        SteelVal::StringV("Architect".into()),
+    ]).unwrap();
+    assert_eq!(res2, SteelVal::StringV("Hello, Architect Antigravity!".into()));
+
+    // 2. safe_call_function timeout protection on infinite loop
+    app.run(r#"
+        (define (spin-forever)
+          (let loop () (loop)))
+    "#).unwrap();
+
+    let start = std::time::Instant::now();
+    let timeout_res = app.safe_call_function("spin-forever", vec![], 100);
+    let elapsed = start.elapsed();
+
+    assert!(timeout_res.is_err());
+    match timeout_res.err().unwrap() {
+        ScriptError::Timeout(ms) => assert_eq!(ms, 100),
+        other => panic!("Expected Timeout, got {:?}", other),
+    }
+    assert!(elapsed.as_millis() < 1000);
+
+    // 3. Immediately call normal function again to verify engine and watchdog recovery
+    let recover_res = app.safe_call_function("multiply", vec![SteelVal::IntV(10), SteelVal::IntV(5)], 200).unwrap();
+    assert_eq!(recover_res, SteelVal::IntV(50));
+}
+
+// ----------------------------------------------------------------------------
+// 7. Dual-Paradigm: Scheme-Authoritative World State & Snapshots
+// ----------------------------------------------------------------------------
+
+#[test]
+fn test_scheme_authoritative_paradigm() {
+    let mut app = ScriptApp::new();
+
+    // Scheme controls the authoritative game state
+    app.run(r#"
+        (define *world* (hash
+          "tick_count" 0
+          "player" (hash "x" 100.0 "y" 200.0 "vx" 5.0 "vy" -2.0 "hp" 100)
+        ))
+
+        (define (game-tick dt)
+          (let* ([tc (+ (hash-ref *world* "tick_count") 1)]
+                 [p (hash-ref *world* "player")]
+                 [px (+ (hash-ref p "x") (* (hash-ref p "vx") dt))]
+                 [py (+ (hash-ref p "y") (* (hash-ref p "vy") dt))]
+                 [new-p (hash-insert (hash-insert p "x" px) "y" py)])
+            (set! *world* (hash-insert (hash-insert *world* "tick_count" tc) "player" new-p))
+            *world*))
+    "#).unwrap();
+
+    // Drive 5 ticks from Rust main loop
+    for _ in 0..5 {
+        let _ = app.tick("game-tick", 1.0).unwrap();
+    }
+
+    // Extract snapshot
+    let snapshot = app.extract_snapshot("*world*").unwrap();
+    assert_eq!(snapshot["tick_count"], 5);
+    assert_eq!(snapshot["player"]["x"], 125.0);
+    assert_eq!(snapshot["player"]["y"], 190.0);
+    assert_eq!(snapshot["player"]["hp"], 100);
+}
+
+// ----------------------------------------------------------------------------
+// 8. World State Serialization & Disk File Restore
+// ----------------------------------------------------------------------------
+
+#[test]
+fn test_state_serialization_and_disk_restore() {
+    let temp_save_file = std::env::temp_dir().join("game_script_save_test.json");
+    if temp_save_file.exists() {
+        let _ = fs::remove_file(&temp_save_file);
+    }
+
+    let mut app1 = ScriptApp::new();
+    app1.run(r#"
+        (define world-state (hash
+          "level" "nether_fortress"
+          "score" 9999
+          "inventory" (list "diamond_pickaxe" "golden_apple" "ender_pearl")
+          "unlocked_achievements" (hash "mine_wood" #t "craft_portal" #t)
+        ))
+    "#).unwrap();
+
+    // 1. Dump to JSON value and verify
+    let dumped_val = app1.dump_state_json("world-state").unwrap();
+    assert_eq!(dumped_val["level"], "nether_fortress");
+    assert_eq!(dumped_val["score"], 9999);
+    assert_eq!(dumped_val["inventory"][0], "diamond_pickaxe");
+
+    // 2. Dump directly to file
+    app1.dump_state_to_file("world-state", &temp_save_file).unwrap();
+    assert!(temp_save_file.exists());
+
+    // 3. Create fresh new VM instance (app2) and restore from file
+    let mut app2 = ScriptApp::new();
+    app2.load_state_from_file("restored-world", &temp_save_file).unwrap();
+
+    // Verify Scheme code can seamlessly read the restored data
+    let level_res = app2.eval_repl("(hash-ref restored-world \"level\")").unwrap();
+    assert_eq!(level_res, "=> \"nether_fortress\"");
+
+    let score_res = app2.eval_repl("(hash-ref restored-world \"score\")").unwrap();
+    assert_eq!(score_res, "=> 9999");
+
+    let inv_res = app2.eval_repl("(first (hash-ref restored-world \"inventory\"))").unwrap();
+    assert_eq!(inv_res, "=> \"diamond_pickaxe\"");
+
+    // 4. Modify state in Scheme, dump again with load_state_json
+    let new_json = json!({
+        "level": "the_end",
+        "score": 15000,
+        "boss_alive": true
+    });
+    app2.load_state_json("active-quest", &new_json).unwrap();
+    let quest_res = app2.eval_repl("(hash-ref active-quest \"level\")").unwrap();
+    assert_eq!(quest_res, "=> \"the_end\"");
+
+    // Cleanup
+    let _ = fs::remove_file(&temp_save_file);
+}
+
+// ----------------------------------------------------------------------------
+// 9. Load Path & Relative Search Stack
+// ----------------------------------------------------------------------------
+
+#[test]
+fn test_load_paths_and_multi_file_require() {
+    let base_dir = std::env::temp_dir().join("test_game_script_load_path");
+    let modules_dir = base_dir.join("modules");
+    let _ = fs::remove_dir_all(&base_dir);
+    fs::create_dir_all(&modules_dir).unwrap();
+
+    // Create a module file: modules/math_utils.scm
+    let module_file = modules_dir.join("math_utils.scm");
+    {
+        let mut file = File::create(&module_file).unwrap();
+        writeln!(file, r#"
+            (provide cube)
+            (define (cube x) (* x x x))
+        "#).unwrap();
+    }
+
+    // Create main script file: base_dir/main.scm
+    let main_file = base_dir.join("main.scm");
+    {
+        let mut file = File::create(&main_file).unwrap();
+        writeln!(file, r#"
+            (require "math_utils.scm")
+            (define result (cube 3))
+        "#).unwrap();
+    }
+
+    let mut app = ScriptApp::new();
+    app.with_load_path(&modules_dir);
+    assert_eq!(app.load_paths().len(), 1);
+
+    // Resolve path check
+    let resolved = app.resolve_path("math_utils.scm");
+    assert!(resolved.is_some());
+    assert_eq!(resolved.unwrap(), module_file);
+
+    // Run file with module requirement
+    app.run_file(&main_file).unwrap();
+
+    let res = app.eval_repl("result").unwrap();
+    assert_eq!(res, "=> 27");
+
+    // Clean up
+    let _ = fs::remove_dir_all(&base_dir);
+}
+
+// ----------------------------------------------------------------------------
+// 10. Persistent Watchdog High Frequency Reuse Stress Test
+// ----------------------------------------------------------------------------
+
+#[test]
+fn test_persistent_watchdog_stress_and_no_thread_spawn() {
+    let mut app = ScriptApp::new();
+
+    app.run(r#"
+        (define (compute-step x)
+          (+ (* x 2) 1))
+    "#).unwrap();
+
+    // Rapidly execute 200 safe calls with 100ms timeout
+    let start = std::time::Instant::now();
+    for i in 0..200 {
+        let res = app.safe_call_function("compute-step", vec![SteelVal::IntV(i)], 100).unwrap();
+        assert_eq!(res, SteelVal::IntV(i * 2 + 1));
+    }
+    let elapsed = start.elapsed();
+
+    // 200 guarded calls should finish in a few tens of milliseconds, not seconds
+    assert!(elapsed.as_millis() < 2000, "200 safe calls took too long: {:?}", elapsed);
 }

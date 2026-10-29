@@ -4,9 +4,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use game_net::PlayerId;
 use serde::{Deserialize, Serialize};
+
+/// Session lifecycle events for game simulation state synchronization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SessionEvent {
+    PlayerJoined { player_id: PlayerId, token: String },
+    PlayerDisconnected { player_id: PlayerId, grace_period_secs: u64 },
+    PlayerReconnected { player_id: PlayerId },
+    PlayerTerminated { player_id: PlayerId },
+}
 
 /// Session connection status state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,6 +88,7 @@ pub struct SessionManager {
     heartbeat_timeout: Duration,
     grace_period: Duration,
     next_player_id: Arc<AtomicU64>,
+    event_queue: Arc<SegQueue<SessionEvent>>,
 }
 
 impl SessionManager {
@@ -89,6 +100,7 @@ impl SessionManager {
             heartbeat_timeout,
             grace_period,
             next_player_id: Arc::new(AtomicU64::new(1)),
+            event_queue: Arc::new(SegQueue::new()),
         }
     }
 
@@ -98,11 +110,13 @@ impl SessionManager {
     /// - Reconnects the session.
     /// - Restores status to `Authenticated` or `InGame`.
     /// - Refreshes heartbeat and resets `disconnected_at`.
+    /// - Emits `SessionEvent::PlayerReconnected`.
     /// - Returns `(player_id, true)`.
     ///
     /// If the token is new or terminated:
     /// - Allocates a new `PlayerId`.
     /// - Registers the session in `Authenticated` status.
+    /// - Emits `SessionEvent::PlayerJoined`.
     /// - Returns `(player_id, false)`.
     pub fn authenticate(&self, token: &str, client_version: &str) -> (PlayerId, bool) {
         if let Some(mut entry) = self.sessions.get_mut(token) {
@@ -114,6 +128,7 @@ impl SessionManager {
                 session.client_version = client_version.to_string();
                 session.last_heartbeat = Instant::now();
                 session.disconnected_at = None;
+                self.event_queue.push(SessionEvent::PlayerReconnected { player_id });
                 return (player_id, true);
             }
         }
@@ -133,6 +148,10 @@ impl SessionManager {
 
         self.sessions.insert(token.to_string(), state);
         self.token_by_player.insert(player_id, token.to_string());
+        self.event_queue.push(SessionEvent::PlayerJoined {
+            player_id,
+            token: token.to_string(),
+        });
         (player_id, false)
     }
 
@@ -175,12 +194,19 @@ impl SessionManager {
     }
 
     /// Transitions session to `Disconnected` status, starting its grace period timer.
+    /// Emits `SessionEvent::PlayerDisconnected`.
     pub fn disconnect(&self, token: &str) -> bool {
         if let Some(mut entry) = self.sessions.get_mut(token) {
             let session = entry.value_mut();
-            if session.status != SessionStatus::Terminated {
+            if session.status != SessionStatus::Terminated && session.status != SessionStatus::Disconnected {
                 session.status = SessionStatus::Disconnected;
                 session.disconnected_at = Some(Instant::now());
+                let pid = session.player_id;
+                let grace_period_secs = self.grace_period.as_secs();
+                self.event_queue.push(SessionEvent::PlayerDisconnected {
+                    player_id: pid,
+                    grace_period_secs,
+                });
                 return true;
             }
         }
@@ -196,12 +222,16 @@ impl SessionManager {
         }
     }
 
-    /// Explicitly terminates a session.
+    /// Explicitly terminates a session. Emits `SessionEvent::PlayerTerminated`.
     pub fn terminate(&self, token: &str) -> bool {
         if let Some(mut entry) = self.sessions.get_mut(token) {
             let session = entry.value_mut();
-            session.status = SessionStatus::Terminated;
-            return true;
+            if session.status != SessionStatus::Terminated {
+                session.status = SessionStatus::Terminated;
+                let pid = session.player_id;
+                self.event_queue.push(SessionEvent::PlayerTerminated { player_id: pid });
+                return true;
+            }
         }
         false
     }
@@ -220,8 +250,14 @@ impl SessionManager {
                     if now.duration_since(session.last_heartbeat) > self.heartbeat_timeout {
                         session.status = SessionStatus::Disconnected;
                         session.disconnected_at = Some(now);
+                        let pid = session.player_id;
+                        let grace_period_secs = self.grace_period.as_secs();
+                        self.event_queue.push(SessionEvent::PlayerDisconnected {
+                            player_id: pid,
+                            grace_period_secs,
+                        });
                         events.push(SessionTimeoutEvent::HeartbeatTimedOut {
-                            player_id: session.player_id,
+                            player_id: pid,
                             token: session.token.clone(),
                         });
                     }
@@ -230,8 +266,10 @@ impl SessionManager {
                     if let Some(disconnected_at) = session.disconnected_at {
                         if now.duration_since(disconnected_at) > self.grace_period {
                             session.status = SessionStatus::Terminated;
+                            let pid = session.player_id;
+                            self.event_queue.push(SessionEvent::PlayerTerminated { player_id: pid });
                             events.push(SessionTimeoutEvent::GracePeriodExpired {
-                                player_id: session.player_id,
+                                player_id: pid,
                                 token: session.token.clone(),
                             });
                         }
@@ -241,6 +279,15 @@ impl SessionManager {
             }
         }
 
+        events
+    }
+
+    /// Drains all lifecycle events that have occurred since the last drain.
+    pub fn drain_session_events(&self) -> Vec<SessionEvent> {
+        let mut events = Vec::new();
+        while let Some(ev) = self.event_queue.pop() {
+            events.push(ev);
+        }
         events
     }
 
@@ -371,5 +418,49 @@ mod tests {
 
         let sess = mgr.get_session("tok1").unwrap();
         assert_eq!(sess.status, SessionStatus::Terminated);
+    }
+
+    #[test]
+    fn test_session_event_feed() {
+        let mgr = SessionManager::new(Duration::from_millis(100), Duration::from_millis(200));
+
+        // 1. Join
+        let (p1, _) = mgr.authenticate("user-a", "1.0");
+        let events = mgr.drain_session_events();
+        assert_eq!(events, vec![
+            SessionEvent::PlayerJoined {
+                player_id: p1,
+                token: "user-a".into(),
+            }
+        ]);
+
+        // 2. Disconnect
+        mgr.disconnect("user-a");
+        let events = mgr.drain_session_events();
+        assert_eq!(events, vec![
+            SessionEvent::PlayerDisconnected {
+                player_id: p1,
+                grace_period_secs: 0,
+            }
+        ]);
+
+        // 3. Reconnect
+        let (p1_again, reconnected) = mgr.authenticate("user-a", "1.1");
+        assert!(reconnected);
+        assert_eq!(p1, p1_again);
+        let events = mgr.drain_session_events();
+        assert_eq!(events, vec![
+            SessionEvent::PlayerReconnected { player_id: p1 }
+        ]);
+
+        // 4. Terminate
+        mgr.terminate("user-a");
+        let events = mgr.drain_session_events();
+        assert_eq!(events, vec![
+            SessionEvent::PlayerTerminated { player_id: p1 }
+        ]);
+
+        // Subsequent drain is empty
+        assert!(mgr.drain_session_events().is_empty());
     }
 }

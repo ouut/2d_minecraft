@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [workspace.dependencies]
@@ -24,9 +24,9 @@ voxel_sim = { path = "crates/voxel_sim" }
 voxel_ecs = { path = "crates/voxel_ecs" }
 voxel_script = { path = "crates/voxel_script" }
 voxel_render = { path = "crates/voxel_render" }
-game_net = { version = "0.1.0", path = "crates/game_net" }
-game_server = { version = "0.1.0", path = "crates/game_server" }
-game_script = { version = "0.1.0", path = "crates/game_script" }
+game_net = { version = "0.2.0", path = "crates/game_net" }
+game_server = { version = "0.2.0", path = "crates/game_server" }
+game_script = { version = "0.2.0", path = "crates/game_script" }
 macroquad = "0.4.16"
 flecs_ecs = { git = "https://github.com/Indra-db/Flecs-Rust" }
 noise = "0.9.0"
@@ -41,6 +41,7 @@ tower-http = { version = "0.5", features = ["fs", "cors", "trace", "compression-
 dashmap = "5.5"
 futures-util = "0.3"
 uuid = { version = "1.8", features = ["v4", "serde"] }
+crossbeam-queue = "0.3"
 
 [profile.dev]
 opt-level = 1
