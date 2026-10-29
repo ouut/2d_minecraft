@@ -8,6 +8,7 @@ members = [
     "crates/voxel_script",
     "crates/voxel_render",
     "crates/voxel_app",
+    "crates/voxel_web",
     "crates/game_net",
     "crates/game_server",
     "crates/game_script",
@@ -24,6 +25,7 @@ voxel_sim = { path = "crates/voxel_sim" }
 voxel_ecs = { path = "crates/voxel_ecs" }
 voxel_script = { path = "crates/voxel_script" }
 voxel_render = { path = "crates/voxel_render" }
+voxel_web = { path = "crates/voxel_web" }
 game_net = { version = "0.2.0", path = "crates/game_net" }
 game_server = { version = "0.2.0", path = "crates/game_server" }
 game_script = { version = "0.2.0", path = "crates/game_script" }
@@ -42,6 +44,7 @@ dashmap = "5.5"
 futures-util = "0.3"
 uuid = { version = "1.8", features = ["v4", "serde"] }
 crossbeam-queue = "0.3"
+getrandom = { version = "0.2", features = ["js"] }
 
 [profile.dev]
 opt-level = 1

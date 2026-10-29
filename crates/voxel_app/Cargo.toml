@@ -11,3 +11,6 @@ voxel_ecs.workspace = true
 voxel_script.workspace = true
 voxel_render.workspace = true
 macroquad.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { workspace = true }

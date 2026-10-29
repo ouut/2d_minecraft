@@ -244,6 +244,22 @@ flowchart BT
 
 ---
 
+### 3.10 3D 体素 WebGL 渲染管线与双视角客户端 (`voxel_web`)
+1. **原汁原味 Minecraft 3D 网格化 (Voxel 3D Meshing)**：
+   - **面剔除 (Face Culling)**：仅在相邻方块为空气或透明时发射 Quad 顶点，剔除地下 90%+ 的内部不可见多边形。
+   - **经典四角环境遮蔽 (AO Shading)**：依据方块四角邻接遮挡计算 4 级环境遮蔽渐变因子，赋予方块鲜明立体感。
+   - **双通道 3D 光照着色**：将 `SkyLight (0..15)` 与 `BlockLight (0..15)` 映射至顶点属性，实现真实火把暖光与日光衰减。
+2. **第一人称透视相机与操作映射**：
+   - 鼠标视线锁定（Pointer Lock API）与自由视线旋转 (Pitch/Yaw)。
+   - `WASD` 3D 地面行走与惯性移动，`Space` 跳跃，`Shift` 潜行。
+3. **杀手级特性：一键双视角自由切换 (`V` 键)**：
+   - **视角 A：2.5D 等距切片视角 (Isometric / Dwarf Fortress 模式)**：上帝俯视、框选蓝图、调度矮人。
+   - **视角 B：第一人称真 3D 视角 (True 3D / Minecraft 模式)**：附身角色双眼，身临其境探险洞穴。
+4. **轻量纯 WebAssembly 架构**：
+   - 纯 Rust + Macroquad 3D，彻底剥离服务端 C 依赖（如 `flecs_ecs`），产物体积仅 1~2 MB，浏览器秒开 60~120 FPS。
+
+---
+
 ## 4. 分阶段实施路线图 (DAG 并发演进模型)
 
 配套的 AI Agent 协同并发执行细则详见《分阶段 AI Agent 协同并发工作手册》(`agent_concurrency_workflow.md`)：
@@ -271,3 +287,7 @@ flowchart BT
    - **Phase 4.0：模块骨架与契约配置 (Lead Agent)**：在 Workspace 引入 `crates/game_script` 依赖。
    - **Phase 4.1：通用插件引擎开发 (`crates/game_script` — Agent H)**：实现 `ScriptPlugin` Trait、`CommandSink`、`ScriptApp` Builder、看门狗中断保护、`SteelVal <-> JSON` 互转与文件监听器。
    - **Phase 4.2：跨游戏集成与移植规范输出 (Integrator Agent)**：更新 `docs/CROSS_GAME_PORTING.md`，指导 `LispCraft` 与 `NoCraft` 接入通用脚本底座。
+6. **Phase 5：Web 浏览器 3D 体素客户端开发 (`crates/voxel_web` — Agent W)**
+   - **Phase 5.0：骨架与 WebAssembly 配置 (Lead Agent)**：配置 `crates/voxel_web` 依赖与 Workspace。
+   - **Phase 5.1：3D 网格化与 WebGL 渲染管线 (Agent W)**：实现 Face Culling、AO 4级阴影着色、第一人称透视相机、`V` 键双视角切换与 WebSocket 联机通信。
+   - **Phase 5.2：端到端浏览器畅玩联调**：编译 WASM 产物至 `assets/web/`，验证在浏览器中流畅运行 3D Minecraft 视界！

@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voxel Engine Web Client</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Minecraft 3D - Voxel Engine Web Client (WebGL / Macroquad)</title>
     <style>
         html, body {
             margin: 0;
@@ -11,32 +11,55 @@
             width: 100%;
             height: 100%;
             overflow: hidden;
-            background-color: #1a1a1a;
-            color: #ffffff;
-            font-family: sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
+            background-color: #87ceeb;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
         }
         #glcanvas {
             width: 100%;
             height: 100%;
             display: block;
+            outline: none;
+            cursor: crosshair;
         }
-        #status {
+        #overlay {
             position: absolute;
-            top: 10px;
-            left: 10px;
+            top: 12px;
+            right: 12px;
             background: rgba(0, 0, 0, 0.7);
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-size: 14px;
+            color: #ffffff;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            pointer-events: none;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: opacity 0.5s ease;
+        }
+        #overlay kbd {
+            background: #333;
+            border: 1px solid #555;
+            border-radius: 3px;
+            padding: 1px 4px;
+            font-family: monospace;
+            font-size: 11px;
         }
     </style>
 </head>
 <body>
-    <div id="status">Voxel Engine Web Gateway - Ready</div>
+    <div id="overlay">
+        <span>🎮 <kbd>Click</kbd> Capture Mouse | <kbd>WASD</kbd> Move | <kbd>Space</kbd> Jump | <kbd>V</kbd> 3D/2.5D View | <kbd>1-9</kbd> Hotbar</span>
+    </div>
     <canvas id="glcanvas" tabindex='1'></canvas>
+
+    <script src="mq_js_bundle.js"></script>
+    <script>
+        const canvas = document.getElementById("glcanvas");
+        window.addEventListener("click", () => {
+            canvas.focus();
+        });
+        load("voxel_web.wasm");
+    </script>
 </body>
 </html>

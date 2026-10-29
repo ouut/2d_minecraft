@@ -831,8 +831,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2465,6 +2467,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "voxel_app"
 version = "0.2.0"
 dependencies = [
+ "getrandom 0.2.17",
  "macroquad",
  "voxel_core",
  "voxel_ecs",
@@ -2515,6 +2518,19 @@ dependencies = [
 name = "voxel_sim"
 version = "0.2.0"
 dependencies = [
+ "voxel_core",
+]
+
+[[package]]
+name = "voxel_web"
+version = "0.2.0"
+dependencies = [
+ "game_net",
+ "getrandom 0.2.17",
+ "macroquad",
+ "postcard",
+ "serde",
+ "serde_json",
  "voxel_core",
 ]
 

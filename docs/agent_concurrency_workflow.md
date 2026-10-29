@@ -292,3 +292,41 @@ Gate 0 通过后，以下 5 个 Agent **同时启动、并行编码**：
 
 #### 🎯 Integrator Agent：跨游戏移植指南更新
 - 在 `docs/CROSS_GAME_PORTING.md` 中增加《通用脚本引擎与插件体系接入指南》，给出 `2d_minecraft`、`LispCraft` 与 `NoCraft` 的适配代码范式。
+
+---
+
+### Phase 5：Web 浏览器 3D 体素客户端开发 (Web 3D Voxel Client — `crates/voxel_web`)
+
+当后端与通用协议底座稳固后，启动 Phase 5 构建 WebGL 原生 3D 体素客户端，彻底打破 2.5D 与 3D 界限：
+
+```mermaid
+flowchart TD
+    subgraph Phase5["Phase 5: 3D 体素 WebGL 渲染管线与双视角客户端"]
+        W["Agent W: crates/voxel_web\n(Face Culling / 4-Level AO / 透视相机 / 双视角切换 / WS联机)"]
+        Assets["assets/web\n(WASM 二进制 / JS 胶水 / HTML5 视口 / WebGL Canvas)"]
+        W -->|cargo build --target wasm32-unknown-unknown| Assets
+    end
+    Phase3 --> Phase5
+```
+
+#### 🎮 Agent W：`crates/voxel_web`（3D WebGL / Macroquad Client Specialist）
+- **独占路径**：`crates/voxel_web/**` 与 `assets/web/**`
+- **依赖输入**：`voxel_core`（纯 Rust 核心定义，绝对不依赖 `flecs_ecs` 等含 C 库）、`game_net`（0.2.0）、`macroquad`
+- **核心模块与职责**：
+  1. `mesh.rs`（3D 体素网格化器）：
+     - 面剔除（Face Culling）：仅相邻方块为空气/透明时生成对应 6 面（Top, Bottom, North, South, East, West）的 Quad。
+     - 4 级经典 Minecraft AO（环境遮蔽）：根据方块 4 个顶点的 3 邻域（2 边 1 角）遮挡计算 `ao_value ∈ [0..3]`，并换算为光影渐变因子。
+     - 顶点装配：生成 `macroquad::models::Vertex` 序列与索引缓冲区，支持双通道光照着色与纹理 UV。
+  2. `camera.rs`（第一人称 3D 透视相机）：
+     - 3D 自由视角：Pitch/Yaw 角度旋转、鼠标锁定（Pointer Lock API）、视锥体构建。
+     - 角色运动控制：`WASD` 3D 地面行走与惯性移动、`Space` 跳跃、`Shift` 潜行、重力与简易 3D AABB 碰撞检测。
+  3. `view_mode.rs`（杀手级一键双视角自由切换）：
+     - `V` 键触发：在“第一人称 3D 透视视角 (True 3D / Minecraft 模式)”与“2.5D 经典等距切片视角 (Isometric / Dwarf Fortress 模式)”之间平滑切换。
+  4. `net_client.rs`（WebSocket 联机网络客户端）：
+     - 基于 `game_net` 双模编解码与 `/ws` 会话交互，接收分块数据与世界实体快照，向服务端上报移动输入与方块挖掘/放置指令。
+  5. `main.rs`：
+     - Macroquad 3D 游戏主循环，集成 3D 视野渲染、屏幕准星（Crosshair）、HUD 调试信息与射线拾取（Raycast 方块高亮与挖掘/建造）。
+- **独立验收**：
+  - 纯 CPU 单元测试：`cargo test -p voxel_web` 验证 3D 网格化生成、面剔除比率、AO 顶点计算。
+  - WASM 编译测试：`cargo build --target wasm32-unknown-unknown -p voxel_web --release`。
+  - 产物部署至 `assets/web/`，配合 `game_server` 提供单端口开箱即用 Web 访问。
