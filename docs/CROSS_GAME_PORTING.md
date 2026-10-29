@@ -2,10 +2,10 @@
 
 本文档是跨三款游戏（`2d_minecraft`、`LispCraft`、`NoCraft`）的通用网络底座移植与复用总目录。
 
-目前通用协议、会话网关与脚本插件底座均已实现标准化解耦：
-- **`game_net` (`v0.1.0`)**：[crates.io/crates/game_net](https://crates.io/crates/game_net)（跨游戏通用协议信封与双模自适应编解码）
-- **`game_server` (`v0.1.0`)**：[crates.io/crates/game_server](https://crates.io/crates/game_server)（Axum HTTP WASM 托管、WebSocket、看门狗会话与输入流水线）
-- **`game_script` (`v0.1.0`)**：通用双层插件架构 Scheme 脚本引擎（`ScriptPlugin`、`CommandSink`、Watchdog 超时看门狗与热重载）
+目前通用协议、会话网关与脚本插件底座已全面升级至 **v0.2.0 工业级标准** 并发布至官方 crates.io：
+- **`game_net` (`v0.2.0`)**：[crates.io/crates/game_net](https://crates.io/crates/game_net)（跨游戏通用协议信封与双模自适应编解码）
+- **`game_server` (`v0.2.0`)**：[crates.io/crates/game_server](https://crates.io/crates/game_server)（Axum HTTP WASM 托管/内嵌、WebSocket、Session 事件流、防 OOM 快照覆盖、组播与防 DoS）
+- **`game_script` (`v0.2.0`)**：[crates.io/crates/game_script](https://crates.io/crates/game_script)（双范式 Scheme 引擎、预编译纳秒级寻址调用、常驻单线程守护看门狗、全量世界状态持久化存档）
 
 ---
 
