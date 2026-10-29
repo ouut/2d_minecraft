@@ -1,20 +1,21 @@
+use flecs_ecs::prelude::*;
 use voxel_core::block::BlockId;
 use voxel_core::coords::WorldPos;
-use voxel_core::traits::ActorKind;
+use voxel_core::traits::{ActorKind, JobType};
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Component, Copy, Clone, Debug, PartialEq, Default)]
 pub struct Position3D {
     pub pos: WorldPos,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
+#[derive(Component, Copy, Clone, Debug, PartialEq, Default)]
 pub struct Velocity3D {
     pub vx: f32,
     pub vy: f32,
     pub vz: f32,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Component, Clone, Debug, PartialEq)]
 pub struct ActorComponent {
     pub kind: ActorKind,
     pub name: String,
@@ -33,16 +34,17 @@ pub enum ColonistState {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Component, Clone, Debug, PartialEq, Default)]
 pub struct ColonistAI {
     pub state: ColonistState,
     pub assigned_job_idx: Option<usize>,
+    pub assigned_job_entity: Option<Entity>,
     pub current_path: Vec<WorldPos>,
     pub path_step: usize,
     pub step_cooldown: f32,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Component, Clone, Debug, PartialEq)]
 pub struct PlayerController {
     pub reach: i32,
     pub move_cooldown: f32,
@@ -59,7 +61,7 @@ impl Default for PlayerController {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Component, Clone, Debug, PartialEq)]
 pub struct Inventory {
     pub slots: [Option<(BlockId, u32)>; 9],
     pub selected_slot: usize,
@@ -82,4 +84,22 @@ impl Default for Inventory {
         inv.slots[8] = Some((BlockId::GLASS, 32));
         inv
     }
+}
+
+// Flecs Relationship Tag Structs
+#[derive(Component, Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub struct WorkingOn;
+
+#[derive(Component, Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub struct Likes;
+
+#[derive(Component, Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub struct Faction;
+
+#[derive(Component, Clone, Debug, PartialEq)]
+pub struct JobTask {
+    pub pos: WorldPos,
+    pub job_type: JobType,
+    pub build_block: BlockId,
+    pub job_idx: usize,
 }

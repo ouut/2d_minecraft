@@ -5,4 +5,4 @@ edition.workspace = true
 
 [dependencies]
 voxel_core.workspace = true
-hecs.workspace = true
+flecs_ecs.workspace = true
