@@ -26,7 +26,7 @@ flowchart TD
         direction LR
         A["Agent A: crates/voxel_gen\n(MC 3D 地形/洞穴/矿脉)"]
         B["Agent B: crates/voxel_sim\n(双通道光照/流体/重力坍塌)"]
-        C["Agent C: crates/voxel_ecs\n(ECS/3D A*寻路/殖民地/主角)"]
+        C["Agent C: crates/voxel_ecs\n(flecs_ecs/3D A*寻路/殖民地/主角)"]
         D["Agent D: crates/voxel_script + mods/\n(Steel Scheme VM/热重载/REPL)"]
         E["Agent E: crates/voxel_render\n(程序化图集/2.5D渲染/UI)"]
     end
@@ -35,31 +35,43 @@ flowchart TD
         App["crates/voxel_app (Layer 2)\n- 具体分块 World 容器 (实现 WorldAccess)\n- EngineCommand 消息路由与主循环"]
     end
 
+    subgraph Phase3["Phase 3: 通用网络与 WASM 浏览器客户端扩展层"]
+        direction LR
+        F["Agent F: crates/game_net\n(通用协议信封 / JSON & Postcard 双模自适应编解码)"]
+        G["Agent G: crates/game_server\n(Axum HTTP WASM静态托管 / WS会话看门狗 / Latch流水线)"]
+    end
+
     Phase0 ==> A & B & C & D & E
     A & B & C & D & E ==> App
+    Phase0 ==> F
+    F ==> G
+    G & App ==> WebAndMultiplayer["端到端验证 (浏览器 WASM 直连 + 跨游戏移植)"]
 ```
 
 > [!IMPORTANT]
 > **核心铁律（DAG 依赖不变量）**：
-> 1. `voxel_core` 不依赖 Workspace 内的任何 Crate。
-> 2. `voxel_gen`、`voxel_sim`、`voxel_ecs`、`voxel_script`、`voxel_render` **只允许依赖 `voxel_core`**，绝对禁止它们之间产生任何横向依赖！
-> 3. 只有 `voxel_app` 可以同时依赖 `voxel_core` 和上述 5 个 Layer 1 Crate。
+> 1. `voxel_core` 与 `game_net` 属于 Layer 0 纯契约层，不依赖 Workspace 内的任何业务 Crate。
+> 2. `voxel_gen`、`voxel_sim`、`voxel_ecs`、`voxel_script`、`voxel_render` **只依赖 `voxel_core`**，各叶节点之间绝对禁止产生横向依赖！
+> 3. `game_server` 仅单向依赖 `game_net` 与网络通用库（`tokio`, `axum`, `tower-http`），与具体游戏业务（体素/地图/渲染）零耦合。
+> 4. `voxel_app` 负责顶层组装，连接游戏仿真与网络服务。
 
 ---
 
 ## 2. 文件读写所有权隔离矩阵 (File Ownership & Write-Scope Matrix)
 
-在 **Phase 1 并发执行期间**，每个 AI Agent 被严格限制在自己的独占目录内写入文件，跨界修改一律禁止：
+每个 AI Agent 被严格限制在自己的独占目录内写入文件，跨界修改一律禁止：
 
 | Agent 角色 | 所属阶段 | 允许写入路径 (Write Scope) | 只读参考路径 (Read-Only) | 禁止触碰路径 | 独立验证命令 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Lead Agent** | Phase 0 | `/Cargo.toml`<br>`crates/voxel_core/**`<br>各 Crate 初始 `Cargo.toml` | 全局 | — | `cargo test -p voxel_core` |
+| **Lead Agent** | Phase 0 & 3.0 | `/Cargo.toml`<br>`crates/voxel_core/**`<br>各 Crate 初始 `Cargo.toml` | 全局 | — | `cargo test -p voxel_core` |
 | **Agent A**<br>(地形生成专家) | Phase 1 | `crates/voxel_gen/src/**` | `crates/voxel_core/src/**` | 根 `Cargo.toml` 及其他所有 Crate | `cargo test -p voxel_gen` |
 | **Agent B**<br>(物理光照专家) | Phase 1 | `crates/voxel_sim/src/**` | `crates/voxel_core/src/**` | 根 `Cargo.toml` 及其他所有 Crate | `cargo test -p voxel_sim` |
-| **Agent C**<br>(寻路与AI专家) | Phase 1 | `crates/voxel_ecs/src/**` | `crates/voxel_core/src/**` | 根 `Cargo.toml` 及其他所有 Crate | `cargo test -p voxel_ecs` |
+| **Agent C**<br>(ECS与AI专家) | Phase 1 | `crates/voxel_ecs/src/**` | `crates/voxel_core/src/**` | 根 `Cargo.toml` 及其他所有 Crate | `cargo test -p voxel_ecs` |
 | **Agent D**<br>(Scheme Mod专家) | Phase 1 | `crates/voxel_script/src/**`<br>`mods/**` | `crates/voxel_core/src/**` | 根 `Cargo.toml` 及其他所有 Crate | `cargo test -p voxel_script` |
 | **Agent E**<br>(等距渲染与UI专家) | Phase 1 | `crates/voxel_render/src/**` | `crates/voxel_core/src/**` | 根 `Cargo.toml` 及其他所有 Crate | `cargo check -p voxel_render` |
-| **Integrator Agent** | Phase 2 | `crates/voxel_app/src/**` | 全部 `crates/**` 与 `mods/**` | 尽量不改动 Layer 1 内部实现 | `cargo test --workspace` |
+| **Agent F**<br>(网络协议专家) | Phase 3 | `crates/game_net/src/**`<br>`crates/game_net/Cargo.toml` | 全局协议标准 | 业务游戏代码目录 | `cargo test -p game_net` |
+| **Agent G**<br>(网关与服务端专家) | Phase 3 | `crates/game_server/src/**`<br>`crates/game_server/Cargo.toml`<br>`assets/web/**` | `crates/game_net/**` | 业务游戏代码目录 | `cargo test -p game_server` |
+| **Integrator Agent** | Phase 2 & 3.2 | `crates/voxel_app/src/**`<br>`docs/**` | 全部 `crates/**` 与 `mods/**` | 尽量不改动叶节点底层实现 | `cargo test --workspace` |
 
 > [!TIP]
 > **为什么连 `Cargo.toml` 都不会冲突？**
@@ -223,3 +235,33 @@ Gate 0 通过后，以下 5 个 Agent **同时启动、并行编码**：
   3. 执行全量验证：
      - `cargo test --workspace`（验证全部 7 个 Crate 的单元与集成测试）
      - `cargo build --workspace`（验证完整可执行程序构建通过）
+
+---
+
+### Phase 3：通用网络与 WebAssembly 浏览器客户端扩展 (Generic Network & WASM Browser)
+
+当基础体素引擎在 Phase 2 完成验证后，启动 Phase 3 网络化演进，严格遵循双 Agent 隔离并发开发原则：
+
+#### 🌐 Agent F：`crates/game_net`（跨游戏通用协议与双模编解码专家）
+- **独占路径**：`crates/game_net/src/**` 与 `crates/game_net/Cargo.toml`
+- **依赖输入**：`serde` + `serde_json` + `postcard`（绝对零业务依赖，跨三款游戏通用）
+- **交付接口**：
+  - `pub enum ClientEnvelope<TInput, TCmd> { Auth, Ping, Input(TInput), Command(TCmd) }`
+  - `pub enum ServerEnvelope<TSnapshot, TEvent> { AuthSuccess, Pong, Snapshot(TSnapshot), Event(TEvent), Kick }`
+  - `pub struct DualCodec`：提供 `encode_text` / `decode_text`（JSON 格式用于调试）与 `encode_binary` / `decode_binary`（Postcard 二进制用于生产），支持帧自适应解码。
+- **独立验收**：编写单元测试验证 JSON 与二进制编解码一致性，运行 `cargo test -p game_net`。
+
+#### 🚀 Agent G：`crates/game_server`（Axum HTTP WASM 托管与 WebSocket 会话网关专家）
+- **独占路径**：`crates/game_server/src/**`、`crates/game_server/Cargo.toml` 与 `assets/web/**`
+- **依赖输入**：`game_net` + `axum` + `tokio` + `tower-http` + `dashmap`
+- **交付接口**：
+  - `pub struct GenericGameServer<TInput, TCmd, TSnapshot, TEvent>`
+  - `start_server(config: ServerConfig, static_dir: PathBuf) -> ServerHandle`：在指定端口同时绑定 HTTP 静态文件服务（自动提供 WASM 与 COOP/COEP 安全头）与 `/ws` WebSocket 路由。
+  - `SessionManager`：管理 Token、心跳保活检测、Grace Period 重连。
+  - 双通道输入摄取：`drain_inputs() -> Vec<(PlayerId, TInput)>` 与 `drain_commands() -> Vec<(PlayerId, Vec<TCmd>)>`。
+- **独立验收**：启动模拟测试服务端，用虚拟客户端进行双向消息与心跳测试，运行 `cargo test -p game_server`。
+
+#### 🎯 Integrator Agent：端到端验证与跨游戏移植交付
+- 在 `voxel_core` 中对齐序列化，在 `voxel_app` 中挂载网络网关。
+- 验证浏览器访问 `http://localhost:8080/` 加载静态资源并直连 WebSocket。
+- 编写并在 `docs/CROSS_GAME_PORTING.md` 中产出《跨游戏网络模块移植指南》，移交 `LispCraft` 与 `NoCraft` 对应 Agent 自主对接。

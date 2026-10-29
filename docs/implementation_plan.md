@@ -8,7 +8,7 @@
 
 | 维度 | 已选定方案 | 关键技术指标 |
 | :--- | :--- | :--- |
-| **技术栈与框架** | `Rust` + `Macroquad` + `hecs` + `noise` | 轻量级即时模式 2D/2.5D 渲染管线 + 高性能 ECS 实体组件系统 |
+| **技术栈与框架** | `Rust` + `Macroquad` + `flecs_ecs` + `noise` | 轻量级即时模式 2D/2.5D 渲染管线 + 官方工业级 Flecs ECS 实体关系系统 |
 | **视觉与投影** | 2:1 经典 2D 等距瓦片 (Isometric) + 4 方向 90° 旋转 | 支持 `Z` 轴分层剖切 (`slice_z`)、下层深度雾化变暗、上层隐藏或半透明轮廓 |
 | **体素数据模型** | 纯粹方块结构 (Minecraft 风格) | 每个 `(x, y, z)` 仅含单一 `BlockId` + 状态元数据，斜坡/楼梯/水均为特殊方块 |
 | **世界规模** | 动态分块加载 (`Chunk` = `16 × 16 × 64`) | 水平方向按需生成与缓存 (`HashMap<(i32, i32), Chunk>`)，垂直 64 层 |
@@ -17,6 +17,8 @@
 | **贴图资产** | 内置程序化像素风等距纹理图集 (Procedural Atlas) | 启动时自动合成带明暗三面、像素噪点、流体半透明与裂纹动画的瓦片图集 |
 | **三大玩法模式** | 主角生存探索 + 殖民地 AI 调度 + 上帝世界编辑器 | 同一世界内一键无缝切换（附身控制主角 / 框选蓝图派发 AI 任务 / 自由笔刷改地形） |
 | **Mod 脚本系统** | `steel-core` (Steel Scheme VM) | 动态方块注册、事件钩子、世界/殖民地 API、自定义 Mod 工具笔刷、`F5` 热重载与游戏内 REPL 控制台 |
+| **通用网络与网关** | `game_net` + `game_server` (`Axum` + `WebSocket`) | 内置 HTTP WASM 静态托管、原生 WebSocket 全双工、测试期 JSON / 正式期二进制双模自适应、Token 会话看门狗与高频移动锁存 |
+| **跨端跨游戏复用** | WebAssembly 浏览器直连 + 3 游戏共享底座 | 浏览器开箱即玩；支持向 `LispCraft` 与 `NoCraft` 零修改平移复用 |
 
 ---
 
@@ -32,18 +34,20 @@
 flowchart BT
     subgraph Layer0["Layer 0: 核心数据契约层 (Phase 0 冻结)"]
         Core["crates/voxel_core\n(Voxel, Chunk, BlockRegistry, IsoCamera,\nWorldAccess Trait, EngineCommand)"]
+        NetContract["crates/game_net\n(ClientEnvelope, ServerEnvelope,\nDualCodec: JSON & Postcard Binary)"]
     end
 
-    subgraph Layer1["Layer 1: 正交叶节点层 (Phase 1 五个 AI Agent 完全并发、互不依赖)"]
+    subgraph Layer1["Layer 1: 正交叶节点层 (并发开发层，互不交叉依赖)"]
         Gen["crates/voxel_gen\n[Agent A: MC 3D 地形/洞穴/矿脉]\ndeps: voxel_core, noise, rand"]
         Sim["crates/voxel_sim\n[Agent B: 光照/流体/重力与坍塌]\ndeps: voxel_core"]
-        ECS["crates/voxel_ecs\n[Agent C: ECS/3D A*寻路/殖民地/主角]\ndeps: voxel_core, hecs"]
+        ECS["crates/voxel_ecs\n[Agent C: flecs_ecs/3D A*寻路/殖民地/主角]\ndeps: voxel_core, flecs_ecs"]
         Script["crates/voxel_script\n[Agent D: Steel Scheme Mod/REPL/热重载]\ndeps: voxel_core, steel-core"]
         Render["crates/voxel_render\n[Agent E: 程序化图集/2.5D渲染/UI]\ndeps: voxel_core, macroquad"]
+        Server["crates/game_server\n[Agent G: Axum HTTP WASM托管/WS会话网关]\ndeps: game_net, tokio, axum, tower-http"]
     end
 
-    subgraph Layer2["Layer 2: 顶层集成宿主层 (Phase 2 聚合联调)"]
-        App["crates/voxel_app\n[Integrator Agent: World容器与主循环]\ndeps: Layer 0 + Layer 1 全部 Crate"]
+    subgraph Layer2["Layer 2: 顶层集成宿主层 (Phase 2 & Phase 3 聚合联调)"]
+        App["crates/voxel_app\n[Integrator Agent: 宿主窗口/单机或联机模式]\ndeps: voxel_core, game_net, game_server, 各叶节点 Crate"]
     end
 
     Gen --> Core
@@ -51,6 +55,7 @@ flowchart BT
     ECS --> Core
     Script --> Core
     Render --> Core
+    Server --> NetContract
 
     App --> Gen
     App --> Sim
@@ -58,59 +63,43 @@ flowchart BT
     App --> Script
     App --> Render
     App --> Core
+    App --> Server
+    App --> NetContract
 ```
 
 ### Workspace 目录与文件所有权隔离规划
 
 ```text
 /workspace/2d_minecraft/
-├── Cargo.toml                       # [Phase 0 锁定] Workspace 根配置与统一依赖版本 (workspace.dependencies)
-├── mods/                            # [Agent D 独占] 官方示例 Steel Scheme Mod 脚本库
+├── Cargo.toml                       # Workspace 根配置与统一依赖版本 (workspace.dependencies)
+├── mods/                            # 官方示例 Steel Scheme Mod 脚本库
 │   ├── 00_stdlib.scm
 │   ├── 01_magic_blocks.scm
 │   └── 02_structures_and_tools.scm
+├── assets/web/                      # WebAssembly 静态客户端资源 (HTML, WASM, JS, 贴图)
+│   ├── index.html
+│   └── pkg/
 └── crates/
-    ├── voxel_core/                  # [Layer 0 - Phase 0 契约冻结]
+    ├── voxel_core/                  # [Layer 0 - 核心游戏数据契约]
+    ├── game_net/                    # [Layer 0 - 通用网络信封与双模序列化契约 (跨3个游戏复用)]
     │   ├── Cargo.toml
     │   └── src/
-    │       ├── lib.rs               # 导出公共契约
-    │       ├── block.rs             # BlockId(u8), Voxel(4B), BlockDef, BlockRegistry
-    │       ├── chunk.rs             # Chunk (16x16x64), 遮挡掩码与脏标记
-    │       ├── coords.rs            # WorldPos, ChunkPos, CardinalDir, 2.5D 等距投影与射线数学
-    │       └── traits.rs            # WorldAccess Trait, EngineCommand, SimEvent, GameMode, JobDesignation
-    ├── voxel_gen/                   # [Layer 1 - Agent A 独占目录]
-    │   ├── Cargo.toml
-    │   └── src/lib.rs               # MC 3D 密度噪声、生物群系、洞穴、矿脉、树木与自然斜坡生成
-    ├── voxel_sim/                   # [Layer 1 - Agent B 独占目录]
+    │       ├── lib.rs               # 导出 ClientEnvelope, ServerEnvelope
+    │       ├── envelope.rs          # 泛型信封定义 (Auth, Ping, Input, Command, Snapshot, Event)
+    │       └── codec.rs             # DualCodec (JSON 文本与 Postcard 二进制自适应)
+    ├── game_server/                 # [Layer 1 - 通用 HTTP WASM 托管与 WebSocket 会话网关]
     │   ├── Cargo.toml
     │   └── src/
     │       ├── lib.rs
-    │       ├── lighting.rs          # SkyLight + BlockLight 双通道增量 BFS
-    │       └── physics.rs           # 8级水/岩浆流体模拟 + 沙砾休止角滑落 + MAX_CANTILEVER 悬空坍塌
-    ├── voxel_ecs/                   # [Layer 1 - Agent C 独占目录]
-    │   ├── Cargo.toml
-    │   └── src/
-    │       ├── lib.rs
-    │       ├── components.rs        # 1x1x1 实体组件 (Position3D, Colonist, Player, Inventory)
-    │       ├── pathfinding.rs       # 3D 跨层 A* 寻路 (支持斜坡/楼梯/安全跳落)
-    │       ├── jobs.rs              # 殖民地矩形框选任务队列与 AI 状态机
-    │       └── player.rs            # 主角 WASD 移动、自动爬坡与挖掘放置控制
-    ├── voxel_script/                # [Layer 1 - Agent D 独占目录]
-    │   ├── Cargo.toml
-    │   └── src/lib.rs               # Steel Scheme VM 绑定、动态方块/工具/钩子注册、F5热重载与REPL求值
-    ├── voxel_render/                # [Layer 1 - Agent E 独占目录]
-    │   ├── Cargo.toml
-    │   └── src/
-    │       ├── lib.rs
-    │       ├── atlas.rs             # 基于 BlockRegistry 的程序化 2.5D 等距像素瓦片图集合成
-    │       ├── iso_renderer.rs      # 画家算法排序、遮挡剔除、Z切片雾化、头顶透视与框选高亮
-    │       └── ui.rs                # 顶部状态栏、Z切片器、调色板、Mod工具栏与交互式 Scheme REPL 终端
-    └── voxel_app/                   # [Layer 2 - Phase 2 集成独占目录]
-        ├── Cargo.toml
-        └── src/
-            ├── main.rs              # Macroquad 窗口入口
-            ├── world.rs             # World 实体容器 (实现 WorldAccess Trait，管理动态分块)
-            └── app.rs               # 主循环、输入路由、EngineCommand 总线分发与三模式切换
+    │       ├── gateway.rs           # Axum HTTP + WS 路由 (带 COOP/COEP 安全头)
+    │       ├── session.rs           # SessionManager (Token, 心跳看门狗, Grace Period)
+    │       └── pipeline.rs          # Latest-Only Latch 锁存器与 FIFO 指令队列
+    ├── voxel_gen/                   # [Layer 1 - 地形/洞穴生成]
+    ├── voxel_sim/                   # [Layer 1 - 光照/流体/重力坍塌]
+    ├── voxel_ecs/                   # [Layer 1 - flecs_ecs / 3D A*寻路]
+    ├── voxel_script/                # [Layer 1 - Steel Scheme VM / Mod系统]
+    ├── voxel_render/                # [Layer 1 - 2.5D 切片渲染 / UI]
+    └── voxel_app/                   # [Layer 2 - 顶层集成入口]
 ```
 
 ---
@@ -216,19 +205,48 @@ flowchart BT
 
 ---
 
+### 3.8 通用网络底座、WASM 客户端与会话网关 (`game_net` & `game_server`)
+1. **协议信封与双模自适应序列化 (`game_net`)**：
+   - 通用客户端信封 `ClientEnvelope<TInput, TCmd>`（包含 `Auth`, `Ping`, `Input(TInput)`, `Command(TCmd)`）。
+   - 通用服务端信封 `ServerEnvelope<TSnapshot, TEvent>`（包含 `AuthSuccess`, `Pong`, `Snapshot(TSnapshot)`, `Event(TEvent)`, `Kick`）。
+   - **双模编解码 (`DualCodec`)**：
+     - 测试/开发环境：使用 `serde_json` 文本帧，浏览器 DevTools 抓包一览无余。
+     - 生产发布环境：使用 `postcard` 高效变长压缩二进制帧，体积小 80%+，CPU 零冗余负担。
+2. **一体化 HTTP + WebSocket 网关 (`game_server/gateway.rs`)**：
+   - 基于 `axum` + `tower-http` 在单端口同时提供静态资源托管与 WebSocket 服务。
+   - 自动托管 `assets/web/` 下的 HTML、WASM、JS 与纹理资产，并注入 `Cross-Origin-Opener-Policy: same-origin` 与 `Cross-Origin-Embedder-Policy: require-corp` 安全头。
+   - `/ws` 端点处理 WebSocket 连接升级，自动根据握手参数或首包识别 JSON / Binary 模式。
+3. **会话状态机与心跳看门狗 (`game_server/session.rs`)**：
+   - 管理 `Token -> SessionId -> PlayerId` 映射。
+   - 状态流转：`Connecting -> Authenticated -> InGame -> Disconnected (Grace Period 60s) -> Terminated`。
+   - 自动 Heartbeat 看门狗：10 秒无心跳自动标记掉线，Grace 保护期内重连无缝恢复实体与状态。
+4. **并发双通道摄取流水线 (`game_server/pipeline.rs`)**：
+   - **高频移动锁存 (`Latest-Only Latch`)**：针对玩家移动/朝向输入，每个玩家只暂存最新一帧，彻底杜绝网络卡顿时移动指令堆积滞后。
+   - **离散交互队列 (`FIFO Command Queue`)**：挖掘、放置、技能、聊天、Scheme 脚本调用严格保持 FIFO 顺序。
+   - 游戏循环每 Tick 仅需通过 `drain_inputs()` 和 `drain_commands()` 批量消费。
+
+---
+
 ## 4. 分阶段实施路线图 (DAG 并发演进模型)
 
 配套的 AI Agent 协同并发执行细则详见《分阶段 AI Agent 协同并发工作手册》(`agent_concurrency_workflow.md`)：
 
-1. **Phase 0：底座契约冻结 (Contract Freeze — 单 Agent 串行奠基)**
-   - 建立根 Workspace `Cargo.toml` 及全部 7 个子 Crate 的空壳骨架。
-   - 完整实现并冻结 `crates/voxel_core`（`Voxel`、`Chunk`、`BlockRegistry`、`IsoCamera`、`WorldAccess` Trait、`EngineCommand` 指令枚举与内置 `MockWorld` 测试桩），确保 `cargo test -p voxel_core` 100% 通过。
+1. **Phase 0：底座契约冻结 (Contract Freeze — Lead Agent 串行奠基)**
+   - 建立根 Workspace `Cargo.toml` 及全部子 Crate 的空壳骨架。
+   - 完整实现并冻结 `crates/voxel_core`，确保 `cargo test -p voxel_core` 100% 通过。
 2. **Phase 1：五大正交叶节点 Crate 完全并行开发 (5 Agents Concurrency — 零文件冲突)**
    - **Agent A (`crates/voxel_gen`)**：实现 Minecraft 风格 3D 密度噪声地形、洞穴、生物群系、矿脉、树木与自然斜坡生成。
    - **Agent B (`crates/voxel_sim`)**：基于 `WorldAccess` Trait 实现双通道 BFS 光照、水/岩浆 8 级流体模拟、沙砾重力休止角滑落与 `MAX_CANTILEVER` 悬空坍塌。
-   - **Agent C (`crates/voxel_ecs`)**：实现 `hecs` 实体、3D A* 跨层寻路、殖民地框选任务分配与主角移动/挖掘控制。
+   - **Agent C (`crates/voxel_ecs`)**：基于官方 `flecs_ecs` 实现预制体与组件系统、3D A* 跨层寻路、殖民地框选任务分配与主角移动/挖掘控制。
    - **Agent D (`crates/voxel_script` + `mods/`)**：实现 Steel Scheme VM 绑定、动态方块/工具/钩子 API、`F5` 热重载、REPL 求值器与 3 个官方示例 Mod 脚本。
    - **Agent E (`crates/voxel_render`)**：实现基于 `BlockRegistry` 的程序化像素等距图集、2.5D 画家算法切片渲染器、多模式 HUD 与交互式 REPL 终端界面。
-3. **Phase 2：顶层宿主集成与端到端联调 (`crates/voxel_app` — 单 Agent 聚合收口)**
+3. **Phase 2：顶层宿主集成与端到端联调 (`crates/voxel_app` — Integrator Agent 聚合收口)**
    - 实现 `World` 容器（对接 `WorldAccess` Trait 与 `voxel_gen`），在 `app.rs` 中串联输入、渲染、`EngineCommand` 总线、模拟步进与 Scheme 钩子回调。
    - 执行全量 `cargo test --workspace` 与 `cargo check --workspace` 验证。
+4. **Phase 3：通用网络与 WebAssembly 浏览器客户端扩展 (Generic Network & WASM Browser)**
+   - **Phase 3.0：网络协议契约奠基 (`crates/game_net` — Agent F)**：实现泛型客户端/服务端信封与 `DualCodec`（JSON + Postcard 二进制双模），编写独立编解码单元测试。
+   - **Phase 3.1：网关与会话引擎开发 (`crates/game_server` — Agent G)**：基于 `axum` + `tower-http` 实现 HTTP 静态托管 (WASM/HTML/Assets) + `/ws` WebSocket 路由，构建 `SessionManager` 看门狗与 Latch/FIFO 并发摄取流水线。
+   - **Phase 3.2：2d_minecraft 集成与浏览器直连验证 (Integrator Agent)**：
+     - 在 `voxel_core` 中对齐网络序列化字段，`voxel_app` 挂载网关。
+     - 验证浏览器访问 `http://localhost:8080/` 加载静态资源并建立 WebSocket 联机。
+   - **Phase 3.3：跨游戏移植指南交付**：产出 `docs/CROSS_GAME_PORTING.md`，赋能 `LispCraft` 与 `NoCraft` 负责 Agent 自主接入。
