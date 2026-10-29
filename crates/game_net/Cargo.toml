@@ -2,6 +2,12 @@
 name = "game_net"
 version.workspace = true
 edition.workspace = true
+description = "Universal game networking protocol envelope and dual-mode JSON/binary codec"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ouut/2d_minecraft"
+readme = "README.md"
+keywords = ["game", "networking", "websocket", "protocol", "wasm"]
+categories = ["game-development", "network-programming"]
 
 [dependencies]
 serde = { workspace = true }
