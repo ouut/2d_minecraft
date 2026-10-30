@@ -68,6 +68,9 @@ impl PlayerCamera {
     }
 
     pub fn set_mouse_locked(&mut self, locked: bool) {
+        if self.mouse_locked == locked {
+            return;
+        }
         self.mouse_locked = locked;
         set_cursor_grab(locked);
         show_mouse(!locked);

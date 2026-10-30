@@ -107,6 +107,15 @@ document.exitPointerLock = document.exitPointerLock ||
     // pointer lock in any form is not supported on iOS safari
     (function () { });
 
+document.addEventListener("pointerlockchange", function () {
+    if (document.pointerLockElement !== canvas) {
+        canvas._pointerLockPending = false;
+    }
+});
+document.addEventListener("pointerlockerror", function () {
+    canvas._pointerLockPending = false;
+});
+
 function assert(flag, message) {
     if (flag == false) {
         alert(message)
@@ -1428,9 +1437,42 @@ var importObject = {
         },
         sapp_set_cursor_grab: function (grab) {
             if (grab) {
-                canvas.requestPointerLock();
+                if (document.pointerLockElement === canvas) {
+                    return;
+                }
+                if (canvas._pointerLockPending) {
+                    return;
+                }
+                var now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+                if (canvas._lastPointerLockReq && (now - canvas._lastPointerLockReq < 400)) {
+                    return;
+                }
+                if (typeof navigator !== "undefined" && navigator.userActivation && !navigator.userActivation.isActive) {
+                    return;
+                }
+                canvas._pointerLockPending = true;
+                canvas._lastPointerLockReq = now;
+                try {
+                    var promise = canvas.requestPointerLock();
+                    if (promise && typeof promise.catch === "function") {
+                        promise.catch(function (err) {
+                            // Suppress browser transient security / rate limit / tab activation errors
+                        }).finally(function () {
+                            canvas._pointerLockPending = false;
+                        });
+                    } else {
+                        canvas._pointerLockPending = false;
+                    }
+                } catch (e) {
+                    canvas._pointerLockPending = false;
+                }
             } else {
-                document.exitPointerLock();
+                canvas._pointerLockPending = false;
+                if (document.pointerLockElement === canvas) {
+                    try {
+                        document.exitPointerLock();
+                    } catch (e) { }
+                }
             }
         },
         sapp_set_cursor: function (ptr, len) {

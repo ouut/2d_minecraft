@@ -84,6 +84,10 @@ async fn main() {
         // 1. Perspective mode toggle
         if is_key_pressed(KeyCode::V) {
             view_mode.toggle();
+            // In 2.5D view, automatically unlock mouse cursor for comfortable UI/orbit navigation
+            if matches!(view_mode, ViewMode::Isometric2D5 { .. }) && player.mouse_locked {
+                player.set_mouse_locked(false);
+            }
         }
 
         // 2. Mouse pointer lock toggle
@@ -91,7 +95,10 @@ async fn main() {
             player.toggle_mouse_lock();
         }
         if !player.mouse_locked && is_mouse_button_pressed(MouseButton::Left) {
-            player.set_mouse_locked(true);
+            // Only auto-lock pointer on left click in 3D first person view
+            if matches!(view_mode, ViewMode::FirstPerson3D) {
+                player.set_mouse_locked(true);
+            }
         }
 
         // 3. Hotbar slot selection (1-9)

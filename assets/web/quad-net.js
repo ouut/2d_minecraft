@@ -1,7 +1,7 @@
 function on_init() {
 }
 
-var register_plugin = function (importObject) {
+var quad_net_register_plugin = function (importObject) {
     importObject.env.ws_connect = ws_connect;
     importObject.env.ws_is_connected = ws_is_connected;
     importObject.env.ws_send = ws_send;
@@ -11,7 +11,7 @@ var register_plugin = function (importObject) {
     importObject.env.http_try_recv = http_try_recv;
 }
 
-miniquad_add_plugin({ register_plugin, on_init, version: 1, name: "quad_net" });
+miniquad_add_plugin({ register_plugin: quad_net_register_plugin, on_init, version: 1, name: "quad_net" });
 
 var quad_socket;
 var connected = 0;

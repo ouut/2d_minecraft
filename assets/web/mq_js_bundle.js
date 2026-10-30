@@ -107,6 +107,15 @@ document.exitPointerLock = document.exitPointerLock ||
     // pointer lock in any form is not supported on iOS safari
     (function () { });
 
+document.addEventListener("pointerlockchange", function () {
+    if (document.pointerLockElement !== canvas) {
+        canvas._pointerLockPending = false;
+    }
+});
+document.addEventListener("pointerlockerror", function () {
+    canvas._pointerLockPending = false;
+});
+
 function assert(flag, message) {
     if (flag == false) {
         alert(message)
@@ -1428,9 +1437,42 @@ var importObject = {
         },
         sapp_set_cursor_grab: function (grab) {
             if (grab) {
-                canvas.requestPointerLock();
+                if (document.pointerLockElement === canvas) {
+                    return;
+                }
+                if (canvas._pointerLockPending) {
+                    return;
+                }
+                var now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+                if (canvas._lastPointerLockReq && (now - canvas._lastPointerLockReq < 400)) {
+                    return;
+                }
+                if (typeof navigator !== "undefined" && navigator.userActivation && !navigator.userActivation.isActive) {
+                    return;
+                }
+                canvas._pointerLockPending = true;
+                canvas._lastPointerLockReq = now;
+                try {
+                    var promise = canvas.requestPointerLock();
+                    if (promise && typeof promise.catch === "function") {
+                        promise.catch(function (err) {
+                            // Suppress browser transient security / rate limit / tab activation errors
+                        }).finally(function () {
+                            canvas._pointerLockPending = false;
+                        });
+                    } else {
+                        canvas._pointerLockPending = false;
+                    }
+                } catch (e) {
+                    canvas._pointerLockPending = false;
+                }
             } else {
-                document.exitPointerLock();
+                canvas._pointerLockPending = false;
+                if (document.pointerLockElement === canvas) {
+                    try {
+                        document.exitPointerLock();
+                    } catch (e) { }
+                }
             }
         },
         sapp_set_cursor: function (ptr, len) {
@@ -1580,8 +1622,6 @@ function load(wasm_path) {
             });
     }
 }
-
-;
 "use strict";
 
 var ctx = null;
@@ -1591,7 +1631,7 @@ js_objects[-1] = null;
 js_objects[-2] = undefined;
 var unique_js_id = 0;
 
-function register_plugin(importObject) {
+function sapp_jsutils_register_plugin(importObject) {
     importObject.env.js_create_string = function (buf, max_len) {
         var string = UTF8ToString(buf, max_len);
         return js_object(string);
@@ -1699,7 +1739,7 @@ function register_plugin(importObject) {
         return js_objects[js_object][field_name];
     }
 }
-miniquad_add_plugin({ register_plugin, version: 1, name: "sapp_jsutils" });
+miniquad_add_plugin({ register_plugin: sapp_jsutils_register_plugin, version: 1, name: "sapp_jsutils" });
 
 // Its like https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder, 
 // but works on more browsers
@@ -1768,12 +1808,10 @@ function get_js_object(id) {
 }
 
 
-
-;
 function on_init() {
 }
 
-var register_plugin = function (importObject) {
+var quad_net_register_plugin = function (importObject) {
     importObject.env.ws_connect = ws_connect;
     importObject.env.ws_is_connected = ws_is_connected;
     importObject.env.ws_send = ws_send;
@@ -1783,7 +1821,7 @@ var register_plugin = function (importObject) {
     importObject.env.http_try_recv = http_try_recv;
 }
 
-miniquad_add_plugin({ register_plugin, on_init, version: 1, name: "quad_net" });
+miniquad_add_plugin({ register_plugin: quad_net_register_plugin, on_init, version: 1, name: "quad_net" });
 
 var quad_socket;
 var connected = 0;

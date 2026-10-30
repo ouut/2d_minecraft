@@ -7,7 +7,7 @@ js_objects[-1] = null;
 js_objects[-2] = undefined;
 var unique_js_id = 0;
 
-function register_plugin(importObject) {
+function sapp_jsutils_register_plugin(importObject) {
     importObject.env.js_create_string = function (buf, max_len) {
         var string = UTF8ToString(buf, max_len);
         return js_object(string);
@@ -115,7 +115,7 @@ function register_plugin(importObject) {
         return js_objects[js_object][field_name];
     }
 }
-miniquad_add_plugin({ register_plugin, version: 1, name: "sapp_jsutils" });
+miniquad_add_plugin({ register_plugin: sapp_jsutils_register_plugin, version: 1, name: "sapp_jsutils" });
 
 // Its like https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder, 
 // but works on more browsers
