@@ -10,7 +10,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = std::env::var("PORT")
         .ok()
         .and_then(|p| p.parse().ok())
-        .unwrap_or(8080);
+        .unwrap_or(8083);
 
     let bind_addr = SocketAddr::from(([0, 0, 0, 0], port));
     let web_dir = if PathBuf::from("assets/web").exists() {

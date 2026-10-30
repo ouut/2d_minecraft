@@ -38,7 +38,7 @@ pub enum StaticAssetSource {
 /// Configuration for the generic game server.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
-    /// Socket address to bind to (e.g., `127.0.0.1:8080` or `0.0.0.0:0` for ephemeral port).
+    /// Socket address to bind to (e.g., `0.0.0.0:8083` or `0.0.0.0:0` for ephemeral port).
     pub bind_addr: SocketAddr,
     /// Heartbeat timeout in seconds before an active session enters the grace period.
     pub heartbeat_timeout_secs: u64,
@@ -55,7 +55,7 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            bind_addr: SocketAddr::from(([127, 0, 0, 1], 8080)),
+            bind_addr: SocketAddr::from(([0, 0, 0, 0], 8083)),
             heartbeat_timeout_secs: 10,
             grace_period_secs: 60,
             static_assets: None,

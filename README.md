@@ -80,31 +80,64 @@
 
 ## 🚀 本地运行与测试
 
-### 1. 运行所有单元测试
+### 1. 一键本地构建脚本 (`build.sh`)
+项目根目录提供了自动化编译与打包脚本，一次性构建所有桌面端原生程序与 WebAssembly 客户端：
+```bash
+./build.sh
+```
+该脚本会自动：
+- 编译 3 款桌面原生程序（`voxel_app`、`voxel_web`、`voxel_server`）至 `target/release/`
+- 编译 WebAssembly 3D 客户端 `voxel_web.wasm` 并同步更新至 `assets/web/`
+- 打包运行所需静态资源与 Mod 至 `dist/`
+
+---
+
+### 2. Cargo 启动命令大全
+
+| 目标程序 / 服务 | 启动命令 | 默认端口 / 地址 | 说明 |
+| :--- | :--- | :--- | :--- |
+| **`voxel_server` (网关服务端)** | `cargo run --release --bin voxel_server` | **`0.0.0.0:8083`** | 启动单端口 WebAssembly 静态资源托管与 WebSocket 网关 |
+| **`voxel_server` (自定义端口)** | `PORT=9000 cargo run --release --bin voxel_server` | `0.0.0.0:9000` | 通过 `PORT` 环境变量动态更改服务端监听端口 |
+| **`voxel_app` (2.5D 切片引擎)** | `cargo run --release --bin voxel_app` | 桌面窗口 (1280x720) | 矮人堡垒风格 Z 轴切片 + Scheme Mod VM + 殖民地 AI |
+| **`voxel_web` (3D 客户端原生版)** | `cargo run --release --bin voxel_web` | 桌面窗口 (1280x720) | 原汁原味 Minecraft 3D 自由视角 + `V` 键双视角切换 + AO 光影 |
+| **`voxel_web` (WebAssembly 构建)** | `cargo build --release --target wasm32-unknown-unknown -p voxel_web` | `assets/web/` | 编译轻量 WebAssembly 产物（配合服务端浏览器秒开） |
+
+#### 快速畅玩指南：
+1. **启动网关服务端**：
+   ```bash
+   cargo run --release --bin voxel_server
+   ```
+2. **在浏览器中打开 3D 体素世界**：
+   访问 **`http://localhost:8083/`** 即可在浏览器全屏畅玩！
+3. **或直接启动桌面客户端**：
+   ```bash
+   cargo run --release --bin voxel_app   # 体验 2.5D 切片与 Scheme Mod
+   cargo run --release --bin voxel_web   # 体验第一人称真 3D
+   ```
+
+---
+
+### 3. 运行全量单元与集成测试
 ```bash
 cargo test --workspace
 ```
-> 包括坐标投影正反变换、3D 跨层坡道寻路、流体元胞扩散、光照传播与 Scheme Mod 动态注册测试。
-
-### 2. 本地启动游戏
-```bash
-cargo run --release --bin voxel_app
-```
+> 全面验证包含 11 个 Crate 的全部 70+ 项单元测试（坐标投影变换、3D 跨层寻路、流体元胞扩散、双通道光照、Scheme 虚拟机看门狗与自适应双模网络协议）。
 
 ---
 
 ## 📦 多平台自动编译与 Release 发布 (GitHub Actions)
 
-本项目配置了完善的 GitHub Actions 持续集成与发布工作流 (`.github/workflows/release.yml`)，可在 GitHub 仓库中全自动编译并在 Release 页面发布三大平台的可执行包：
+本项目配置了完善的 GitHub Actions 持续集成与发布工作流 (`.github/workflows/release.yml`)，可在 GitHub 仓库中全自动编译并在 Release 页面发布三大平台的可执行包与 WebAssembly 离线包：
 
-- **Windows**: `x86_64-pc-windows-msvc` (`voxel_app-windows-x86_64.zip`)
-- **macOS (Apple Silicon)**: `aarch64-apple-darwin` (`voxel_app-macos-arm64.tar.gz`)
-- **Linux**: `x86_64-unknown-linux-gnu` (`voxel_app-linux-x86_64.tar.gz`)
+- **Windows**: `x86_64-pc-windows-msvc` (`voxel_suite-windows-x86_64.zip`)
+- **macOS (Apple Silicon)**: `aarch64-apple-darwin` (`voxel_suite-macos-arm64.tar.gz`)
+- **Linux**: `x86_64-unknown-linux-gnu` (`voxel_suite-linux-x86_64.tar.gz`)
+- **WebAssembly**: 浏览器独立完整运行包 (`voxel_web-wasm.zip`)
 
 ### 触发自动发布：
 只需在本地打上版本 tag 并推送到 GitHub：
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
-或者在 GitHub 仓库的 **Actions** 标签页中手动点击 **Run workflow**。GitHub Actions 将自动打包二进制文件与 `mods/` 示例目录并创建 Release。
+或者在 GitHub 仓库的 **Actions** 标签页中手动点击 **Run workflow**。GitHub Actions 将自动打包三大二进制文件、WASM 产物与 `mods/` 示例目录并创建 Release。
