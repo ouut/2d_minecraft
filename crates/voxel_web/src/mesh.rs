@@ -182,10 +182,15 @@ impl MeshBuilder {
     }
 
     #[inline]
-    fn ensure_capacity(&mut self, additional_vertices: usize) {
-        if self.current_vertices.len() + additional_vertices > 65000 {
-            let vertices = std::mem::replace(&mut self.current_vertices, Vec::with_capacity(4096));
-            let indices = std::mem::replace(&mut self.current_indices, Vec::with_capacity(6144));
+    fn ensure_capacity(&mut self, additional_vertices: usize, additional_indices: usize) {
+        // Macroquad's internal QuadGl drawcall capacity defaults to 10,000 vertices and 5,000 indices.
+        // If a single mesh passes >= 5,000 indices, QuadGl logs "geometry() exceeded max drawcall size, clamping".
+        // Therefore, we safely split meshes at 3,000 vertices / 4,500 indices per sub-mesh.
+        if self.current_vertices.len() + additional_vertices > 3000
+            || self.current_indices.len() + additional_indices > 4500
+        {
+            let vertices = std::mem::replace(&mut self.current_vertices, Vec::with_capacity(1024));
+            let indices = std::mem::replace(&mut self.current_indices, Vec::with_capacity(1536));
             self.meshes.push(Mesh {
                 vertices,
                 indices,
@@ -203,7 +208,7 @@ impl MeshBuilder {
         ao_levels: [usize; 4],
         light_level: f32,
     ) {
-        self.ensure_capacity(4);
+        self.ensure_capacity(4, 6);
 
         let base_idx = self.current_vertices.len() as u16;
         let dir_light = face.dir_light();
