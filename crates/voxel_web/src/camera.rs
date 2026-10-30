@@ -12,7 +12,7 @@ pub const WALK_SPEED: f32 = 4.3;
 pub const SNEAK_SPEED: f32 = 1.6;
 pub const JUMP_VELOCITY: f32 = 8.4;
 pub const GRAVITY: f32 = 24.0;
-pub const MOUSE_SENSITIVITY: f32 = 0.003;
+pub const MOUSE_SENSITIVITY: f32 = 0.0025;
 
 #[derive(Clone, Debug)]
 pub struct PlayerCamera {

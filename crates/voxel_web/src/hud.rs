@@ -68,7 +68,7 @@ pub fn render_hud(player: &PlayerCamera, view_mode: ViewMode, hotbar: &Hotbar) {
     let screen_h = screen_height();
 
     // 1. Center Crosshair (in First-Person mode)
-    if view_mode == ViewMode::FirstPerson3D {
+    if view_mode.is_first_person() {
         let cx = screen_w * 0.5;
         let cy = screen_h * 0.5;
         let cross_size = 9.0;
@@ -86,7 +86,7 @@ pub fn render_hud(player: &PlayerCamera, view_mode: ViewMode, hotbar: &Hotbar) {
     // 2. Top-Left Diagnostics and Controls Overlay
     let panel_x = 12.0;
     let panel_y = 12.0;
-    let panel_w = 420.0;
+    let panel_w = 460.0;
     let panel_h = 100.0;
 
     draw_rectangle(panel_x, panel_y, panel_w, panel_h, Color::new(0.0, 0.0, 0.0, 0.65));
@@ -94,14 +94,17 @@ pub fn render_hud(player: &PlayerCamera, view_mode: ViewMode, hotbar: &Hotbar) {
 
     let fps = get_fps();
     let pos = player.position;
-    let mode_str = view_mode.name();
+    let mode_str = match view_mode {
+        ViewMode::FirstPerson3D => "3D First-Person",
+        ViewMode::Isometric2D5 { .. } => "2.5D Isometric",
+    };
     let held_str = hotbar.current_name();
     let lock_str = if player.mouse_locked { "LOCKED (Tab/Esc to unlock)" } else { "UNLOCKED (Click to lock)" };
 
     draw_text(&format!("Minecraft 3D (Macroquad WebGL) | FPS: {}", fps), panel_x + 10.0, panel_y + 22.0, 18.0, YELLOW);
     draw_text(&format!("XYZ: {:.2} / {:.2} / {:.2} | View: {} [V]", pos.x, pos.y, pos.z, mode_str), panel_x + 10.0, panel_y + 44.0, 16.0, WHITE);
     draw_text(&format!("Held: {} [1-9] | Mouse: {}", held_str, lock_str), panel_x + 10.0, panel_y + 66.0, 16.0, LIGHTGRAY);
-    draw_text("[WASD] Move | [Space] Jump | [L-Click] Mine | [R-Click] Place", panel_x + 10.0, panel_y + 88.0, 14.0, GREEN);
+    draw_text("[WASD] Move | [Space] Jump | [V] Toggle 3D/2.5D | [RMB] Orbit", panel_x + 10.0, panel_y + 88.0, 14.0, GREEN);
 
     // 3. Bottom Hotbar (9 items)
     let slot_size = 46.0;

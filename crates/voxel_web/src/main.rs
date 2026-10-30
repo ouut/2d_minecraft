@@ -76,6 +76,8 @@ async fn main() {
         }
     }
 
+    let mut last_mouse_pos = Vec2::from(mouse_position());
+
     loop {
         let dt = get_frame_time();
 
@@ -114,9 +116,28 @@ async fn main() {
         let jump = is_key_down(KeyCode::Space);
         let sneak = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
 
-        // 5. Mouse view rotation
-        let mouse_delta = mouse_delta_position();
-        player.update_mouse_look(mouse_delta);
+        // 5. Mouse view rotation & Orbit
+        let current_mouse_pos = Vec2::from(mouse_position());
+        let mouse_delta_pixels = current_mouse_pos - last_mouse_pos;
+        last_mouse_pos = current_mouse_pos;
+
+        match view_mode {
+            ViewMode::FirstPerson3D => {
+                // In first person, rotate player look when mouse is captured
+                player.update_mouse_look(mouse_delta_pixels);
+            }
+            ViewMode::Isometric2D5 { .. } => {
+                // In 2.5D, rotate camera orbit when dragging with Right Mouse Button or when locked
+                if is_mouse_button_down(MouseButton::Right) || player.mouse_locked {
+                    view_mode.handle_isometric_orbit(mouse_delta_pixels.x, mouse_delta_pixels.y);
+                }
+                // Zoom in/out with scroll wheel
+                let wheel = mouse_wheel().1;
+                if wheel.abs() > 0.01 {
+                    view_mode.handle_zoom(wheel);
+                }
+            }
+        }
 
         // 6. Physics and AABB terrain collision
         player.update_physics(dt, vec2(forward, right), jump, sneak, &world, &reg);
@@ -165,7 +186,7 @@ async fn main() {
         }
 
         // Draw player avatar in 2.5D Isometric view
-        if view_mode == ViewMode::Isometric2D5 {
+        if view_mode.is_isometric() {
             let p = player.position;
             // Legs (Navy blue)
             draw_cube(vec3(p.x, p.y, p.z + 0.35), vec3(0.5, 0.35, 0.7), None, Color::new(0.1, 0.2, 0.5, 1.0));
