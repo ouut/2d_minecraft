@@ -53,15 +53,35 @@
     </div>
     <canvas id="glcanvas" tabindex='1'></canvas>
 
-    <script src="gl.js"></script>
-    <script src="sapp_jsutils.js"></script>
-    <script src="quad-net.js"></script>
+    <script src="gl.js?v=0.2.1"></script>
+    <script src="sapp_jsutils.js?v=0.2.1"></script>
+    <script src="quad-net.js?v=0.2.1"></script>
     <script>
-        window.addEventListener("click", () => {
-            const el = document.getElementById("glcanvas");
-            if (el) el.focus();
+        const canvas = document.getElementById("glcanvas");
+        const overlay = document.getElementById("overlay");
+
+        // Native DOM Pointer Lock triggered by genuine user gesture
+        canvas.addEventListener("click", () => {
+            canvas.focus();
+            if (document.pointerLockElement !== canvas) {
+                try {
+                    const p = canvas.requestPointerLock();
+                    if (p && p.catch) {
+                        p.catch(() => {});
+                    }
+                } catch (e) {}
+            }
         });
-        load("voxel_web.wasm");
+
+        document.addEventListener("pointerlockchange", () => {
+            if (document.pointerLockElement === canvas) {
+                if (overlay) overlay.style.opacity = "0.2";
+            } else {
+                if (overlay) overlay.style.opacity = "1";
+            }
+        });
+
+        load("voxel_web.wasm?v=0.2.1");
     </script>
 </body>
 </html>
